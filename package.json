@@ -1,0 +1,16 @@
+{
+  "name": "coldchain-platform",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && npm run start:dev",
+    "dev:iot": "cd iot && npm run dev",
+    "dev:aiml": "cd ai-ml && python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload",
+    "build:all": "cd backend && npm run build && cd ../iot && npm run build && cd ../frontend && npm run build"
+  },
+  "dependencies": {
+    "@neon/config": "^1.9.1",
+    "@neon/env": "^1.6.2"
+  }
+}

@@ -1,0 +1,258 @@
+import * as dotenv from 'dotenv';
+import * as path from 'path';
+
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+dotenv.config({ path: path.resolve(__dirname, '../../../.env.local') });
+
+import { neon } from '@neondatabase/serverless';
+import * as bcrypt from 'bcryptjs';
+
+async function initDb() {
+  console.log('--- Initializing Neon Postgres Schema & Seed Data ---');
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    console.error('ERROR: DATABASE_URL not set in environment.');
+    process.exit(1);
+  }
+
+  const sql = neon(databaseUrl);
+
+  console.log('1. Creating tables...');
+
+  // Create extension for UUID generation if not present
+  await sql`CREATE EXTENSION IF NOT EXISTS "uuid-ossp";`;
+
+  // Users table
+  await sql`
+    CREATE TABLE IF NOT EXISTS users (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      name VARCHAR(100) NOT NULL,
+      email VARCHAR(150) UNIQUE NOT NULL,
+      password_hash VARCHAR(255) NOT NULL,
+      role VARCHAR(20) NOT NULL CHECK (role IN ('admin', 'owner', 'truckUser')),
+      owner_id UUID REFERENCES users(id) ON DELETE SET NULL,
+      truck_id UUID,
+      active BOOLEAN DEFAULT true,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `;
+
+  // Trucks table
+  await sql`
+    CREATE TABLE IF NOT EXISTS trucks (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      plate_number VARCHAR(50) UNIQUE NOT NULL,
+      type VARCHAR(50) NOT NULL,
+      capacity_tons NUMERIC(5,2) NOT NULL,
+      status VARCHAR(20) DEFAULT 'available' CHECK (status IN ('available', 'on_trip', 'maintenance')),
+      target_temp_c NUMERIC(4,1) DEFAULT 4.0,
+      insurance_expiry DATE,
+      permit_expiry DATE,
+      fitness_expiry DATE,
+      active BOOLEAN DEFAULT true,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `;
+
+  // Trips table
+  await sql`
+    CREATE TABLE IF NOT EXISTS trips (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      truck_id UUID NOT NULL REFERENCES trucks(id) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      origin VARCHAR(255) NOT NULL,
+      destination VARCHAR(255) NOT NULL,
+      cargo_type VARCHAR(100) NOT NULL,
+      notes TEXT,
+      started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      ended_at TIMESTAMP
+    );
+  `;
+
+  // Issues table
+  await sql`
+    CREATE TABLE IF NOT EXISTS issues (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      truck_id UUID NOT NULL REFERENCES trucks(id) ON DELETE CASCADE,
+      reported_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      description TEXT NOT NULL,
+      status VARCHAR(20) DEFAULT 'open' CHECK (status IN ('open', 'investigating', 'resolved')),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `;
+
+  // Activity Log table
+  await sql`
+    CREATE TABLE IF NOT EXISTS activity_log (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      actor_id UUID REFERENCES users(id) ON DELETE SET NULL,
+      action VARCHAR(100) NOT NULL,
+      entity VARCHAR(50) NOT NULL,
+      entity_id UUID,
+      details JSONB DEFAULT '{}'::jsonb,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `;
+
+  console.log('2. Seeding initial data (Skill S7)...');
+
+  // Check if users already seeded
+  const existingUsers = await sql`SELECT count(*)::int as count FROM users`;
+  if (existingUsers[0].count > 0) {
+    console.log(`Tables already contain ${existingUsers[0].count} users. Cleaning and re-seeding for clean state...`);
+    await sql`TRUNCATE TABLE activity_log, issues, trips, trucks, users RESTART IDENTITY CASCADE;`;
+  }
+
+  const defaultPassword = 'password123';
+  const passwordHash = await bcrypt.hash(defaultPassword, 10);
+
+  // 1 Admin
+  const adminRows = await sql`
+    INSERT INTO users (name, email, password_hash, role)
+    VALUES ('Alexander Wright', 'admin@elitecold.com', ${passwordHash}, 'admin')
+    RETURNING id;
+  `;
+  const adminId = adminRows[0].id;
+
+  // 2 Owners
+  const owner1Rows = await sql`
+    INSERT INTO users (name, email, password_hash, role)
+    VALUES ('Bespoke Reefer Logistics', 'owner1@elitecold.com', ${passwordHash}, 'owner')
+    RETURNING id;
+  `;
+  const owner1Id = owner1Rows[0].id;
+
+  const owner2Rows = await sql`
+    INSERT INTO users (name, email, password_hash, role)
+    VALUES ('Apex Nordic Cold Transport', 'owner2@elitecold.com', ${passwordHash}, 'owner')
+    RETURNING id;
+  `;
+  const owner2Id = owner2Rows[0].id;
+
+  // 3 Truck Users (Drivers)
+  const driver1Rows = await sql`
+    INSERT INTO users (name, email, password_hash, role, owner_id)
+    VALUES ('Marcus Vance', 'driver1@elitecold.com', ${passwordHash}, 'truckUser', ${owner1Id})
+    RETURNING id;
+  `;
+  const driver1Id = driver1Rows[0].id;
+
+  const driver2Rows = await sql`
+    INSERT INTO users (name, email, password_hash, role, owner_id)
+    VALUES ('Elena Rostova', 'driver2@elitecold.com', ${passwordHash}, 'truckUser', ${owner1Id})
+    RETURNING id;
+  `;
+  const driver2Id = driver2Rows[0].id;
+
+  const driver3Rows = await sql`
+    INSERT INTO users (name, email, password_hash, role, owner_id)
+    VALUES ('Devon Miller', 'driver3@elitecold.com', ${passwordHash}, 'truckUser', ${owner2Id})
+    RETURNING id;
+  `;
+  const driver3Id = driver3Rows[0].id;
+
+  // 7 Trucks across multiple statuses & document expirations (Skill S7 requirement)
+  // Truck 1: Available, good docs (Owner 1)
+  const truck1Rows = await sql`
+    INSERT INTO trucks (owner_id, plate_number, type, capacity_tons, status, target_temp_c, insurance_expiry, permit_expiry, fitness_expiry)
+    VALUES (${owner1Id}, 'DL-01-AX-4821', 'Refrigerated Semi 10T', 10.5, 'available', 3.5, '2027-04-15', '2027-06-20', '2027-08-10')
+    RETURNING id;
+  `;
+  const truck1Id = truck1Rows[0].id;
+
+  // Truck 2: On trip, assigned to driver1 (Owner 1)
+  const truck2Rows = await sql`
+    INSERT INTO trucks (owner_id, plate_number, type, capacity_tons, status, target_temp_c, insurance_expiry, permit_expiry, fitness_expiry)
+    VALUES (${owner1Id}, 'MH-04-BZ-9042', 'Heavy Reefer 18T', 18.0, 'on_trip', -18.0, '2027-02-10', '2027-03-15', '2027-05-30')
+    RETURNING id;
+  `;
+  const truck2Id = truck2Rows[0].id;
+  await sql`UPDATE users SET truck_id = ${truck2Id} WHERE id = ${driver1Id};`;
+
+  // Truck 3: Expiring documents flag test (Owner 1) - Expiring insurance in 4 days!
+  const expiringDate = new Date();
+  expiringDate.setDate(expiringDate.getDate() + 4);
+  const expiringStr = expiringDate.toISOString().split('T')[0];
+
+  const truck3Rows = await sql`
+    INSERT INTO trucks (owner_id, plate_number, type, capacity_tons, status, target_temp_c, insurance_expiry, permit_expiry, fitness_expiry)
+    VALUES (${owner1Id}, 'HR-26-CY-1188', 'Medium Van 4.5T', 4.5, 'available', 4.0, ${expiringStr}, '2027-01-20', '2027-09-12')
+    RETURNING id;
+  `;
+  const truck3Id = truck3Rows[0].id;
+  await sql`UPDATE users SET truck_id = ${truck3Id} WHERE id = ${driver2Id};`;
+
+  // Truck 4: Maintenance status test (Owner 1)
+  const truck4Rows = await sql`
+    INSERT INTO trucks (owner_id, plate_number, type, capacity_tons, status, target_temp_c, insurance_expiry, permit_expiry, fitness_expiry)
+    VALUES (${owner1Id}, 'UP-16-DK-7733', 'Cold Box Truck 8T', 8.0, 'maintenance', 2.0, '2027-07-01', '2027-07-15', '2027-11-20')
+    RETURNING id;
+  `;
+  const truck4Id = truck4Rows[0].id;
+
+  // Truck 5: Available (Owner 2)
+  const truck5Rows = await sql`
+    INSERT INTO trucks (owner_id, plate_number, type, capacity_tons, status, target_temp_c, insurance_expiry, permit_expiry, fitness_expiry)
+    VALUES (${owner2Id}, 'KA-05-EM-6620', 'Pharma Ultra-Cool Reefer', 6.0, 'on_trip', -25.0, '2027-05-18', '2027-06-30', '2027-08-25')
+    RETURNING id;
+  `;
+  const truck5Id = truck5Rows[0].id;
+  await sql`UPDATE users SET truck_id = ${truck5Id} WHERE id = ${driver3Id};`;
+
+  // Truck 6: Available (Owner 2)
+  const truck6Rows = await sql`
+    INSERT INTO trucks (owner_id, plate_number, type, capacity_tons, status, target_temp_c, insurance_expiry, permit_expiry, fitness_expiry)
+    VALUES (${owner2Id}, 'TN-09-FV-3301', 'Refrigerated Semi 12T', 12.0, 'available', 5.0, '2027-03-25', '2027-09-10', '2027-10-14')
+    RETURNING id;
+  `;
+
+  // Trips data
+  // Active trip for truck 2 with driver 1
+  await sql`
+    INSERT INTO trips (truck_id, user_id, origin, destination, cargo_type, notes, started_at)
+    VALUES (${truck2Id}, ${driver1Id}, 'Mumbai Port Logistics Terminal 3', 'Delhi Northern Cold Hub', 'Frozen Seafood & Salmon', 'Keep continuous temperature lock at -18C.', NOW() - INTERVAL '6 hours');
+  `;
+
+  // Completed trip for truck 2
+  await sql`
+    INSERT INTO trips (truck_id, user_id, origin, destination, cargo_type, notes, started_at, ended_at)
+    VALUES (${truck2Id}, ${driver1Id}, 'Pune Distribution Center', 'Mumbai Port', 'Specialty Dairy Products', 'Delivered intact, temp steady at 3.8C.', NOW() - INTERVAL '3 days', NOW() - INTERVAL '2 days 18 hours');
+  `;
+
+  // Active trip for truck 5 with driver 3
+  await sql`
+    INSERT INTO trips (truck_id, user_id, origin, destination, cargo_type, notes, started_at)
+    VALUES (${truck5Id}, ${driver3Id}, 'Bangalore Biotech Hub', 'Hyderabad Medical Depot', 'Vaccines & Biological Reagents', 'Strict regulatory protocol: maintain below -20C.', NOW() - INTERVAL '14 hours');
+  `;
+
+  // Sample Issues
+  await sql`
+    INSERT INTO issues (truck_id, reported_by, description, status)
+    VALUES (${truck4Id}, ${driver2Id}, 'Reefer compressor cycling intermittently; scheduled diagnostic service.', 'investigating');
+  `;
+
+  await sql`
+    INSERT INTO issues (truck_id, reported_by, description, status)
+    VALUES (${truck2Id}, ${driver1Id}, 'Minor door gasket condensation observed during pre-trip inspection.', 'open');
+  `;
+
+  // Activity Log audit entries (Skill S2 requirement)
+  await sql`
+    INSERT INTO activity_log (actor_id, action, entity, entity_id, details)
+    VALUES 
+      (${adminId}, 'INITIALIZE_SYSTEM', 'PLATFORM', ${null}::uuid, '{"note": "Initial cold chain platform deployment"}'::jsonb),
+      (${adminId}, 'CREATE_OWNER', 'USER', ${owner1Id}::uuid, '{"name": "Bespoke Reefer Logistics"}'::jsonb),
+      (${owner1Id}, 'ADD_TRUCK', 'TRUCK', ${truck1Id}::uuid, '{"plateNumber": "DL-01-AX-4821"}'::jsonb),
+      (${owner1Id}, 'ADD_TRUCK', 'TRUCK', ${truck2Id}::uuid, '{"plateNumber": "MH-04-BZ-9042"}'::jsonb),
+      (${owner1Id}, 'ASSIGN_DRIVER', 'USER', ${driver1Id}::uuid, '{"action": "Assigned driver"}'::jsonb),
+      (${driver1Id}, 'START_TRIP', 'TRIP', ${truck2Id}::uuid, '{"origin": "Mumbai", "destination": "Delhi"}'::jsonb);
+  `;
+
+  console.log('✅ Database schema and demo dataset successfully initialized!');
+}
+
+initDb().catch((err) => {
+  console.error('Fatal initialization error:', err);
+  process.exit(1);
+});

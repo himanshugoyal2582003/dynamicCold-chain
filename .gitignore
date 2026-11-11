@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Environment and secrets
+.env
+.env*.local
+.env.development
+.env.test
+.env.production
+backend/.env
+frontend/.env.local
+!*.example
+
+# Build outputs
+dist/
+.next/
+out/
+build/
+
+# Neon CLI
+.neon
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.system_generated/
+
+# OS files
+.DS_Store
+Thumbs.db
