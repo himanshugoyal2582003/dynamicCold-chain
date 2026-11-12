@@ -124,4 +124,61 @@ export class OwnerService {
       [ownerId],
     );
   }
+
+  async updateTargetTemp(ownerId: string, truckId: string, targetTempC: number) {
+    const check = await this.sql(
+      `SELECT id FROM trucks WHERE id = $1 AND owner_id = $2 AND active = true`,
+      [truckId, ownerId],
+    );
+    if (!check.length) throw new ForbiddenException('Access denied');
+
+    const rows = await this.sql(
+      `UPDATE trucks SET target_temp_c = $1 WHERE id = $2 RETURNING *`,
+      [targetTempC, truckId],
+    );
+    return rows[0];
+  }
+
+  async createDriver(
+    ownerId: string,
+    data: { name: string; email: string; password?: string; truckId?: string },
+  ) {
+    const bcrypt = await import('bcryptjs');
+    const defaultPassword = data.password || 'password123';
+    const hash = await bcrypt.hash(defaultPassword, 10);
+
+    const rows = await this.sql(
+      `INSERT INTO users (name, email, password_hash, role, owner_id, truck_id, active)
+       VALUES ($1, $2, $3, 'truckUser', $4, $5, true)
+       RETURNING id, name, email, role, truck_id, owner_id`,
+      [data.name.trim(), data.email.toLowerCase().trim(), hash, ownerId, data.truckId || null],
+    );
+    return rows[0];
+  }
+
+  async createTruck(
+    ownerId: string,
+    data: {
+      plate_number: string;
+      type: string;
+      capacity_tons: number;
+      target_temp_c?: number;
+      iot_connection_number?: string;
+    },
+  ) {
+    const rows = await this.sql(
+      `INSERT INTO trucks (owner_id, plate_number, type, capacity_tons, target_temp_c, iot_connection_number, status, active)
+       VALUES ($1, $2, $3, $4, $5, $6, 'available', true)
+       RETURNING *`,
+      [
+        ownerId,
+        data.plate_number.trim().toUpperCase(),
+        data.type || 'Refrigerated Semi 10T',
+        data.capacity_tons || 10.0,
+        data.target_temp_c || 4.0,
+        data.iot_connection_number ? data.iot_connection_number.trim().toUpperCase() : null,
+      ],
+    );
+    return rows[0];
+  }
 }

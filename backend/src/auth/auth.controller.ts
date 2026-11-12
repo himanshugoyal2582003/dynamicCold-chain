@@ -41,6 +41,33 @@ export class AuthController {
     return { success: true, token, user };
   }
 
+  @Post('register')
+  @HttpCode(201)
+  async register(
+    @Body() body: { name: string; email: string; password: string; role: string },
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { token, user } = await this.authService.register(
+      body.name,
+      body.email,
+      body.password,
+      body.role,
+    );
+
+    res.cookie('coldchain_token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 8 * 60 * 60 * 1000,
+      path: '/',
+    });
+
+    res.setHeader('Authorization', `Bearer ${token}`);
+    res.setHeader('x-auth-token', token);
+
+    return { success: true, token, user };
+  }
+
   @Post('logout')
   @HttpCode(200)
   logout(@Res({ passthrough: true }) res: Response) {

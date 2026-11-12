@@ -49,4 +49,39 @@ export class OwnerController {
     const ownerId = assertOwner(req);
     return this.ownerService.getMyDrivers(ownerId);
   }
+
+  @Post('drivers')
+  async createDriver(
+    @Req() req: Request,
+    @Body() body: { name: string; email: string; password?: string; truckId?: string },
+  ) {
+    const ownerId = assertOwner(req);
+    return this.ownerService.createDriver(ownerId, body);
+  }
+
+  @Patch('trucks/:id/target-temp')
+  async updateTargetTemp(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: { targetTempC: number },
+  ) {
+    const ownerId = assertOwner(req);
+    return this.ownerService.updateTargetTemp(ownerId, id, body.targetTempC);
+  }
+
+  @Post('trucks')
+  async createTruck(
+    @Req() req: Request,
+    @Body()
+    body: {
+      plate_number: string;
+      type: string;
+      capacity_tons: number;
+      target_temp_c?: number;
+      iot_connection_number?: string;
+    },
+  ) {
+    const ownerId = assertOwner(req);
+    return this.ownerService.createTruck(ownerId, body);
+  }
 }

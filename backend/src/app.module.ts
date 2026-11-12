@@ -33,6 +33,7 @@ export class AppModule implements NestModule {
       .apply(AuthGuardMiddleware)
       .exclude(
         { path: 'api/auth/login', method: RequestMethod.POST },
+        { path: 'api/auth/register', method: RequestMethod.POST },
         { path: 'api/neon/health', method: RequestMethod.GET },
         { path: 'api/iot/ingest', method: RequestMethod.POST },
       )

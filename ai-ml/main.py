@@ -267,6 +267,77 @@ def process_iot_telemetry(req: RawIoTTelemetry):
     return processed
 
 
+# --- Dynamic Cold-Chain Insurance Pricing ML Model ---
+# Predicts monthly insurance premium adjustments based on real-time cold-chain compliance,
+# thermal excursions, door sensor anomalies, and incident records.
+@app.post("/api/predict/insurance", response_model=InsurancePricingResponse)
+def predict_insurance_pricing(req: InsurancePricingRequest):
+    base_price = max(100.0, req.base_price or 450.0)
+
+    # 1. Calculate Risk Metric
+    thermal_penalty = (req.temp_excursion_count * 9.5) + (req.avg_temp_deviation * 14.0)
+    door_penalty = req.door_open_incidents * 5.0
+    incident_penalty = req.incident_count * 20.0
+
+    # 2. Safety credits for clean trips and tenure
+    safety_credits = min(25.0, (req.trip_count * 1.5) + (req.months_in_service * 1.2))
+
+    total_risk = max(5.0, min(95.0, 15.0 + thermal_penalty + door_penalty + incident_penalty - safety_credits))
+    risk_score = round(total_risk, 1)
+
+    factors: List[Dict[str, str]] = []
+
+    # 3. Determine Monthly Pricing Adjustment (Increase on risk, decrease on compliance)
+    if risk_score <= 25.0:
+        # Compliance Discount: decreases gradually based on good data
+        discount_pct = min(22.0, 6.0 + (req.months_in_service * 1.5) + (req.trip_count * 0.4))
+        discount_pct = round(discount_pct, 1)
+        current_price = round(base_price * (1.0 - (discount_pct / 100.0)), 2)
+        price_change_pct = -discount_pct
+        risk_tier = "LOW_RISK (Discounted)"
+        recommendation = f"Superior cold-chain integrity. Qualified for a {discount_pct}% monthly safe-carrier premium discount."
+
+        factors.append({"factor": "Zero Critical Excursions", "impact": f"-{round(discount_pct * 0.6, 1)}% Discount"})
+        factors.append({"factor": "Consistent Thermal Control", "impact": f"-{round(discount_pct * 0.4, 1)}% Discount"})
+    elif risk_score <= 55.0:
+        # Standard Risk Tier
+        current_price = base_price
+        price_change_pct = 0.0
+        risk_tier = "STANDARD"
+        recommendation = "Standard risk rating. Zero major violations observed. Maintain target temperatures to unlock discounts."
+        factors.append({"factor": "Standard Operation Profile", "impact": "Baseline Rate Maintained"})
+    else:
+        # Surcharge Tier: increases price due to temperature spikes and incidents
+        surcharge_pct = min(45.0, 10.0 + ((risk_score - 55.0) * 0.9))
+        surcharge_pct = round(surcharge_pct, 1)
+        current_price = round(base_price * (1.0 + (surcharge_pct / 100.0)), 2)
+        price_change_pct = surcharge_pct
+        risk_tier = "HIGH_RISK (Surcharge)"
+        recommendation = f"Thermal stress & spoilage hazard detected. Surcharge of +{surcharge_pct}% applied to monthly premium. Inspection required."
+
+        if req.temp_excursion_count > 0:
+            factors.append({"factor": f"{req.temp_excursion_count} Temperature Excursion(s)", "impact": f"+{round(req.temp_excursion_count * 8.0, 1)}% Surcharge"})
+        if req.door_open_incidents > 0:
+            factors.append({"factor": f"{req.door_open_incidents} Door Sensor Breach(es)", "impact": f"+{round(req.door_open_incidents * 4.5, 1)}% Surcharge"})
+        if req.incident_count > 0:
+            factors.append({"factor": f"{req.incident_count} Reported Incident(s)", "impact": f"+{round(req.incident_count * 15.0, 1)}% Surcharge"})
+
+    adjustment_amount = round(current_price - base_price, 2)
+
+    return InsurancePricingResponse(
+        truck_id=req.truck_id,
+        base_price=base_price,
+        current_price=current_price,
+        price_change_pct=price_change_pct,
+        risk_score=risk_score,
+        risk_tier=risk_tier,
+        adjustment_amount=adjustment_amount,
+        recommendation=recommendation,
+        pricing_factors=factors,
+    )
+
+
+
 # WebSocket connection per truck: sends live telemetry every 10 seconds
 @app.websocket("/ws/telemetry/{truck_id}")
 async def websocket_telemetry_endpoint(websocket: WebSocket, truck_id: str):

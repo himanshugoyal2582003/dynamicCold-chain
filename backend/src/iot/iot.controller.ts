@@ -92,4 +92,41 @@ export class IotController {
       connectionNumber: this.iotService.getConnectionForTruck(truckId),
     };
   }
+
+  // 6. Get 15-minute telemetry time series history for a truck
+  @Get('history/:truckId')
+  async getTelemetryHistory(@Req() req: Request, @Param('truckId') truckId: string) {
+    if (!req.user) throw new UnauthorizedException('Authentication required.');
+
+    const hasAccess = await this.iotService.verifyTruckAccess(req.user, truckId);
+    if (!hasAccess) {
+      throw new ForbiddenException('Access denied: You cannot access history for another vehicle.');
+    }
+
+    const history = await this.iotService.getTelemetryHistory(truckId);
+    return {
+      success: true,
+      truckId,
+      count: history.length,
+      history,
+    };
+  }
+
+  // 7. Calculate dynamic AI insurance pricing for a truck
+  @Post('insurance/:truckId/recalculate')
+  async recalculateInsurance(@Req() req: Request, @Param('truckId') truckId: string) {
+    if (!req.user) throw new UnauthorizedException('Authentication required.');
+
+    const hasAccess = await this.iotService.verifyTruckAccess(req.user, truckId);
+    if (!hasAccess) {
+      throw new ForbiddenException('Access denied: You do not own this vehicle.');
+    }
+
+    const insurance = await this.iotService.recalculateInsurance(truckId);
+    return {
+      success: true,
+      truckId,
+      insurance,
+    };
+  }
 }

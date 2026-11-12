@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { ErrorAlert } from '@/components/ui/shared';
 
 export default function LoginPage() {
@@ -172,6 +173,13 @@ export default function LoginPage() {
               {submitting ? 'Signing in…' : 'Sign in'}
             </button>
           </form>
+
+          <p className="text-xs text-center mt-6" style={{ color: 'var(--color-slate)' }}>
+            Need a Fleet Owner or Admin account?{' '}
+            <Link href="/signup" className="font-semibold text-slate-800 hover:underline">
+              Create account →
+            </Link>
+          </p>
 
           {/* Mobile demo accounts */}
           <div className="mt-8 md:hidden">
