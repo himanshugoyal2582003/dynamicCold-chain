@@ -2,29 +2,56 @@ import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import { neon, NeonQueryFunction } from '@neondatabase/serverless';
 import { S3Client, ListObjectsV2Command, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { createInMemoryPostgres } from './memory-db';
 
 @Injectable()
 export class NeonService implements OnModuleInit {
   private readonly logger = new Logger(NeonService.name);
-  private sql: NeonQueryFunction<false, false> | null = null;
+  private sql: any = null;
   private s3Client: S3Client;
   private jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 
   async onModuleInit() {
-    this.initPostgres();
+    await this.initPostgres();
     this.initObjectStorage();
     this.initAuth();
   }
 
   // 1. Neon Postgres
-  private initPostgres() {
+  private async initPostgres() {
     const connectionString = process.env.DATABASE_URL;
-    if (!connectionString) {
-      this.logger.error('DATABASE_URL is not defined in environment!');
-      return;
+    if (connectionString && !connectionString.includes('your-db') && connectionString.startsWith('postgres')) {
+      if (connectionString.includes('neon.tech')) {
+        this.sql = neon(connectionString);
+        this.logger.log('Neon Postgres serverless driver initialized.');
+      } else {
+        const { Pool } = await import('pg');
+        const pool = new Pool({ connectionString });
+        this.sql = async (stringsOrQuery: any, ...values: any[]) => {
+          if (typeof stringsOrQuery === 'string') {
+            const params = values[0] || [];
+            const res = await pool.query(stringsOrQuery, params);
+            return res.rows;
+          }
+          let query = '';
+          const params: any[] = [];
+          for (let i = 0; i < stringsOrQuery.length; i++) {
+            query += stringsOrQuery[i];
+            if (i < values.length) {
+              params.push(values[i]);
+              query += '$' + params.length;
+            }
+          }
+          const res = await pool.query(query, params);
+          return res.rows;
+        };
+        this.logger.log('Local/Remote Postgres driver connected via pg.Pool.');
+      }
+    } else {
+      this.logger.log('DATABASE_URL not configured. Initializing embedded Postgres with demo seed data...');
+      this.sql = await createInMemoryPostgres();
+      this.logger.log('Embedded in-memory Postgres initialized and seeded with demo accounts.');
     }
-    this.sql = neon(connectionString);
-    this.logger.log('Neon Postgres serverless driver initialized.');
   }
 
   getSql() {
