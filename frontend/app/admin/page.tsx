@@ -9,6 +9,7 @@ import { apiFetch } from '@/lib/auth';
 
 const NAV = [
   { href: '/admin', label: 'Overview', icon: '◈' },
+  { href: '/admin/tracking', label: 'Global Map', icon: '📍' },
   { href: '/admin/owners', label: 'Owners', icon: '🏢' },
   { href: '/admin/trucks', label: 'Trucks', icon: '🚛' },
   { href: '/admin/users', label: 'Drivers', icon: '👤' },

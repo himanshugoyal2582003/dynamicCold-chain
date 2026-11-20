@@ -6,10 +6,12 @@ import { AdminModule } from './admin/admin.module';
 import { OwnerModule } from './owner/owner.module';
 import { TruckModule } from './truck/truck.module';
 import { IotModule } from './iot/iot.module';
+import { TrackingModule } from './tracking/tracking.module';
 import { AdminController } from './admin/admin.controller';
 import { OwnerController } from './owner/owner.controller';
 import { TruckController } from './truck/truck.controller';
 import { IotController } from './iot/iot.controller';
+import { TrackingController } from './tracking/tracking.controller';
 import { AuthGuardMiddleware } from './middlewares/auth.middleware';
 
 @Module({
@@ -24,6 +26,7 @@ import { AuthGuardMiddleware } from './middlewares/auth.middleware';
     OwnerModule,
     TruckModule,
     IotModule,
+    TrackingModule,
   ],
 })
 export class AppModule implements NestModule {
@@ -42,6 +45,7 @@ export class AppModule implements NestModule {
         OwnerController,
         TruckController,
         IotController,
+        TrackingController,
         { path: 'api/auth/me', method: RequestMethod.GET },
         { path: 'api/auth/logout', method: RequestMethod.POST },
       );

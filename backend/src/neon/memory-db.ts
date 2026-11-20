@@ -108,6 +108,29 @@ export async function createInMemoryPostgres() {
       route_recommendation TEXT,
       recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS truck_locations (
+      truck_id UUID PRIMARY KEY,
+      latitude NUMERIC(10,7) NOT NULL,
+      longitude NUMERIC(10,7) NOT NULL,
+      speed_kmh NUMERIC(5,2) DEFAULT 0,
+      heading NUMERIC(5,2) DEFAULT 0,
+      accuracy_m NUMERIC(8,2),
+      recorded_at TIMESTAMP NOT NULL,
+      received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS truck_location_history (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      truck_id UUID NOT NULL,
+      latitude NUMERIC(10,7) NOT NULL,
+      longitude NUMERIC(10,7) NOT NULL,
+      speed_kmh NUMERIC(5,2) DEFAULT 0,
+      heading NUMERIC(5,2) DEFAULT 0,
+      accuracy_m NUMERIC(8,2),
+      recorded_at TIMESTAMP NOT NULL,
+      received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   const adapter = db.adapters.createPg();
@@ -221,6 +244,7 @@ export async function createInMemoryPostgres() {
      VALUES ($1, 'TN-09-FV-3301', 'Refrigerated Semi 12T', 12.0, 'available', 5.0, '2027-03-25', '2027-09-10', '2027-10-14', 'IOT-TN09-FV') RETURNING id`,
     [owner2Id],
   );
+  const truck6Id = truck6Rows[0].id;
 
   // Trips
   await runner(
@@ -250,6 +274,86 @@ export async function createInMemoryPostgres() {
   await runner(
     `INSERT INTO activity_log (actor_id, action, entity, entity_id, details) VALUES ($1, 'INITIALIZE_SYSTEM', 'PLATFORM', $1, '{"note": "Cold chain platform running"}'::jsonb)`,
     [adminId],
+  );
+
+  // ── Seed Real-time GPS Locations & Route History (Intelligent Live Tracking) ──
+  // Truck 1: DL-01-AX-4821 (Available, Delhi Cold Hub)
+  await runner(
+    `INSERT INTO truck_locations (truck_id, latitude, longitude, speed_kmh, heading, accuracy_m, recorded_at, received_at)
+     VALUES ($1, 28.6139, 77.2090, 0, 0, 8.5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [truck1Id],
+  );
+
+  // Truck 2: MH-04-BZ-9042 (On Trip: Mumbai → Delhi, currently Vadodara Highway)
+  await runner(
+    `INSERT INTO truck_locations (truck_id, latitude, longitude, speed_kmh, heading, accuracy_m, recorded_at, received_at)
+     VALUES ($1, 22.3072, 73.1812, 64.5, 25, 4.2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [truck2Id],
+  );
+
+  // Seed historical route breadcrumbs for Truck 2 (Mumbai -> Delhi corridor)
+  const truck2Points = [
+    [18.9400, 72.8350, 45.0, 10], // Mumbai Port
+    [19.2183, 72.9781, 52.0, 15], // Thane
+    [19.7432, 72.9150, 68.0, 20], // Manor
+    [20.3893, 72.9106, 62.0, 22], // Vapi
+    [21.1702, 72.8311, 55.0, 25], // Surat
+    [21.7051, 72.9959, 66.0, 25], // Bharuch
+    [22.3072, 73.1812, 64.5, 25], // Vadodara (Current)
+  ];
+  for (let i = 0; i < truck2Points.length; i++) {
+    const [lat, lon, spd, hdg] = truck2Points[i];
+    await runner(
+      `INSERT INTO truck_location_history (truck_id, latitude, longitude, speed_kmh, heading, accuracy_m, recorded_at, received_at)
+       VALUES ($1, $2, $3, $4, $5, 5.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [truck2Id, lat, lon, spd, hdg],
+    );
+  }
+
+  // Truck 3: HR-26-CY-1188 (Available, Gurgaon Depot)
+  await runner(
+    `INSERT INTO truck_locations (truck_id, latitude, longitude, speed_kmh, heading, accuracy_m, recorded_at, received_at)
+     VALUES ($1, 28.4595, 77.0266, 0, 0, 6.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [truck3Id],
+  );
+
+  // Truck 4: UP-16-DK-7733 (Maintenance, Noida Logistics Park)
+  await runner(
+    `INSERT INTO truck_locations (truck_id, latitude, longitude, speed_kmh, heading, accuracy_m, recorded_at, received_at)
+     VALUES ($1, 28.5355, 77.3910, 0, 0, 10.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [truck4Id],
+  );
+
+  // Truck 5: KA-05-EM-6620 (On Trip: Bangalore → Hyderabad, currently Kurnool Bypass)
+  await runner(
+    `INSERT INTO truck_locations (truck_id, latitude, longitude, speed_kmh, heading, accuracy_m, recorded_at, received_at)
+     VALUES ($1, 15.8281, 78.0373, 58.2, 15, 3.8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [truck5Id],
+  );
+
+  // Seed historical route breadcrumbs for Truck 5 (Bangalore -> Hyderabad corridor)
+  const truck5Points = [
+    [12.9716, 77.5946, 35.0, 10], // Bangalore Biotech Hub
+    [13.4325, 77.7275, 60.0, 12], // Chikballapur
+    [13.7844, 77.7936, 65.0, 15], // Bagepalli
+    [14.6819, 77.6006, 62.0, 15], // Anantapur
+    [15.1147, 77.6366, 59.0, 18], // Gooty
+    [15.8281, 78.0373, 58.2, 15], // Kurnool (Current)
+  ];
+  for (let i = 0; i < truck5Points.length; i++) {
+    const [lat, lon, spd, hdg] = truck5Points[i];
+    await runner(
+      `INSERT INTO truck_location_history (truck_id, latitude, longitude, speed_kmh, heading, accuracy_m, recorded_at, received_at)
+       VALUES ($1, $2, $3, $4, $5, 5.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [truck5Id, lat, lon, spd, hdg],
+    );
+  }
+
+  // Truck 6: TN-09-FV-3301 (Available, Chennai Port)
+  await runner(
+    `INSERT INTO truck_locations (truck_id, latitude, longitude, speed_kmh, heading, accuracy_m, recorded_at, received_at)
+     VALUES ($1, 13.0827, 80.2707, 0, 0, 9.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [truck6Id],
   );
 
   return runner;

@@ -1,0 +1,397 @@
+'use client';
+
+import { useEffect, useRef, useCallback } from 'react';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface MapTruck {
+  truck_id: string;
+  plate_number: string;
+  type?: string;
+  status: 'available' | 'on_trip' | 'maintenance' | string;
+  target_temp_c?: number;
+  current_temp?: number;
+  gps_status?: 'live' | 'stale' | 'no_data' | string;
+  location?: {
+    latitude: number;
+    longitude: number;
+    speed_kmh?: number;
+    heading?: number;
+  } | null;
+  driver?: {
+    name: string;
+    email?: string;
+  } | null;
+  active_trip?: {
+    id?: string;
+    origin: string;
+    destination: string;
+    cargo_type: string;
+    started_at?: string;
+  } | null;
+}
+
+interface FleetMapProps {
+  trucks: MapTruck[];
+  selectedTruckId?: string | null;
+  onSelectTruck?: (truck: MapTruck) => void;
+  routeCoordinates?: [number, number][];
+  originCoords?: [number, number] | null;
+  destinationCoords?: [number, number] | null;
+  originName?: string;
+  destinationName?: string;
+  className?: string;
+  focusTruckId?: string | null;
+  height?: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Status helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function getStatusColor(status: string): string {
+  switch (status) {
+    case 'on_trip':     return '#2F5D8A';
+    case 'maintenance': return '#C9962B';
+    case 'available':   return '#2E7D5B';
+    default:            return '#5B6470';
+  }
+}
+
+function buildTruckIconHtml(truck: MapTruck, isSelected: boolean): string {
+  const color = getStatusColor(truck.status);
+  const isGpsActive = truck.gps_status === 'live';
+  const pulseHtml =
+    truck.status === 'on_trip' && isGpsActive
+      ? `<div class="absolute -inset-1.5 rounded-full animate-ping opacity-30" style="background:${color}"></div>`
+      : '';
+
+  const ringClass = isSelected
+    ? 'scale-125 ring-2 ring-offset-2 ring-[#B08D3C]'
+    : 'group-hover:scale-110';
+
+  return `
+    <div class="relative flex flex-col items-center cursor-pointer group" style="transform:translate(-50%,-50%);">
+      ${pulseHtml}
+      <div class="w-8 h-8 rounded-full flex items-center justify-center shadow-md transition-transform duration-200 ${ringClass}"
+           style="background:${color};border:2px solid #FFFFFF;">
+        <span style="font-size:14px;">🚛</span>
+      </div>
+      <div class="mt-1 px-1.5 py-0.5 rounded shadow-sm text-[10px] font-mono font-bold whitespace-nowrap"
+           style="background:#14171C;color:#FFFFFF;border:1px solid #E3E1DC;">
+        ${truck.plate_number}
+      </div>
+    </div>
+  `;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Component
+// ─────────────────────────────────────────────────────────────────────────────
+
+export default function FleetMap({
+  trucks,
+  selectedTruckId,
+  onSelectTruck,
+  routeCoordinates,
+  originCoords,
+  destinationCoords,
+  originName,
+  destinationName,
+  className = '',
+  focusTruckId,
+  height = '500px',
+}: FleetMapProps) {
+  const mapContainerRef   = useRef<HTMLDivElement>(null);
+  const mapRef            = useRef<any>(null);
+  const mapReadyRef       = useRef(false);
+  const markersRef        = useRef<Map<string, any>>(new Map());
+  const polylineRef       = useRef<any>(null);
+  const endpointMarkersRef= useRef<any[]>([]);
+
+  // Keep latest callback in a ref so effects don't re-subscribe on every render
+  const onSelectTruckRef = useRef(onSelectTruck);
+  useEffect(() => { onSelectTruckRef.current = onSelectTruck; }, [onSelectTruck]);
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 1. Initialize Leaflet map (once, client-side only)
+  // ───────────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    let isMounted = true;
+
+    async function initMap() {
+      if (!mapContainerRef.current || mapReadyRef.current) return;
+
+      const L = (await import('leaflet')).default;
+
+      if (!isMounted || !mapContainerRef.current) return;
+
+      // Fix default broken icon paths in Next.js
+      delete (L.Icon.Default.prototype as any)._getIconUrl;
+      L.Icon.Default.mergeOptions({
+        iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
+        iconUrl:       'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
+        shadowUrl:     'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+      });
+
+      const tileUrl = process.env.NEXT_PUBLIC_MAP_TILE_URL ||
+        'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+      const attribution = process.env.NEXT_PUBLIC_MAP_ATTRIBUTION ||
+        "&copy; <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap</a> contributors";
+
+      const map = L.map(mapContainerRef.current, {
+        center: [21.5, 78.5],
+        zoom: 5,
+        zoomControl: false,
+        attributionControl: false,
+      });
+
+      // Custom AttributionControl with prefix: false to remove "Leaflet" branding
+      L.control.attribution({
+        prefix: false,
+        position: 'bottomright',
+      }).addTo(map);
+
+      const tileOptions: any = {
+        attribution,
+        maxZoom: 19,
+      };
+      if (tileUrl.includes('{s}')) {
+        tileOptions.subdomains = ['a', 'b', 'c'];
+      }
+
+      L.tileLayer(tileUrl, tileOptions).addTo(map);
+
+      L.control.zoom({ position: 'topright' }).addTo(map);
+
+      mapRef.current = map;
+      mapReadyRef.current = true;
+
+      // Invalidate size once DOM layout settles so tiles render completely without blank gaps
+      setTimeout(() => {
+        if (mapRef.current) {
+          mapRef.current.invalidateSize();
+        }
+      }, 200);
+    }
+
+    initMap().catch(console.error);
+
+    return () => {
+      isMounted = false;
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+        mapReadyRef.current = false;
+      }
+    };
+  }, []);
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 2. Sync truck markers
+  // ───────────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const syncMarkers = async () => {
+      const map = mapRef.current;
+      if (!map) return;
+
+      const L = (await import('leaflet')).default;
+      const locatedTrucks = trucks.filter(
+        (t) =>
+          t.location &&
+          typeof t.location.latitude === 'number' &&
+          typeof t.location.longitude === 'number' &&
+          !isNaN(t.location.latitude) &&
+          !isNaN(t.location.longitude)
+      );
+
+      const seenIds = new Set<string>();
+
+      locatedTrucks.forEach((t) => {
+        const id = t.truck_id;
+        seenIds.add(id);
+        const lat = t.location!.latitude;
+        const lng = t.location!.longitude;
+        const isSelected = selectedTruckId === id;
+
+        const iconHtml = buildTruckIconHtml(t, isSelected);
+        const icon = L.divIcon({
+          html: iconHtml,
+          className: 'custom-truck-icon',
+          iconSize: [32, 48],
+          iconAnchor: [16, 24],
+        });
+
+        if (markersRef.current.has(id)) {
+          const marker = markersRef.current.get(id);
+          marker.setLatLng([lat, lng]);
+          marker.setIcon(icon);
+        } else {
+          const marker = L.marker([lat, lng], { icon });
+          marker.on('click', () => {
+            if (onSelectTruckRef.current) onSelectTruckRef.current(t);
+          });
+          marker.addTo(map);
+          markersRef.current.set(id, marker);
+        }
+      });
+
+      // Remove markers for trucks no longer in the list
+      markersRef.current.forEach((marker: any, id: string) => {
+        if (!seenIds.has(id)) {
+          marker.remove();
+          markersRef.current.delete(id);
+        }
+      });
+    };
+
+    syncMarkers().catch(console.error);
+  }, [trucks, selectedTruckId]);
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 3. Focus truck (flyTo)
+  // ───────────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!focusTruckId || !mapRef.current) return;
+    const truck = trucks.find((t) => t.truck_id === focusTruckId);
+    if (!truck?.location) return;
+    const { latitude, longitude } = truck.location;
+    mapRef.current.flyTo([latitude, longitude], 13, { duration: 1.2 });
+  }, [focusTruckId, trucks]);
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 4. Route polyline + endpoint markers
+  // ───────────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const syncRoute = async () => {
+      const map = mapRef.current;
+      if (!map) return;
+
+      const L = (await import('leaflet')).default;
+
+      // Clear previous polyline
+      if (polylineRef.current) {
+        polylineRef.current.remove();
+        polylineRef.current = null;
+      }
+
+      // Clear previous endpoint markers
+      endpointMarkersRef.current.forEach((m) => m.remove());
+      endpointMarkersRef.current = [];
+
+      // Draw route polyline
+      if (routeCoordinates && routeCoordinates.length > 1) {
+        const polyline = L.polyline(routeCoordinates, {
+          color: '#2F5D8A',
+          weight: 4,
+          opacity: 0.85,
+          dashArray: '8, 6',
+          lineCap: 'round',
+          lineJoin: 'round',
+        }).addTo(map);
+        polylineRef.current = polyline;
+        map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
+      }
+
+      // Origin marker (A)
+      if (originCoords) {
+        const originHtml = `
+          <div class="flex items-center justify-center w-6 h-6 rounded-full shadow-md text-xs font-bold text-white"
+               style="background:#2E7D5B;border:2px solid #FFFFFF;">A</div>
+        `;
+        const originIcon = L.divIcon({ html: originHtml, className: 'endpoint-icon', iconSize: [24, 24], iconAnchor: [12, 12] });
+        const mOrigin = L.marker(originCoords, { icon: originIcon }).addTo(map);
+        if (originName) mOrigin.bindPopup(`<b>Origin:</b> ${originName}`);
+        endpointMarkersRef.current.push(mOrigin);
+      }
+
+      // Destination marker (B)
+      if (destinationCoords) {
+        const destHtml = `
+          <div class="flex items-center justify-center w-6 h-6 rounded-full shadow-md text-xs font-bold text-white"
+               style="background:#A3262A;border:2px solid #FFFFFF;">B</div>
+        `;
+        const destIcon = L.divIcon({ html: destHtml, className: 'endpoint-icon', iconSize: [24, 24], iconAnchor: [12, 12] });
+        const mDest = L.marker(destinationCoords, { icon: destIcon }).addTo(map);
+        if (destinationName) mDest.bindPopup(`<b>Destination:</b> ${destinationName}`);
+        endpointMarkersRef.current.push(mDest);
+      }
+    };
+
+    syncRoute().catch(console.error);
+  }, [routeCoordinates, originCoords, destinationCoords, originName, destinationName]);
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Fit all fleet trucks in view
+  // ───────────────────────────────────────────────────────────────────────────
+  const fitAllTrucks = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const locatedTrucks = trucks.filter(
+      (t) =>
+        t.location &&
+        typeof t.location.latitude === 'number' &&
+        typeof t.location.longitude === 'number'
+    );
+    if (locatedTrucks.length === 0) return;
+    const bounds = locatedTrucks.map((t) => [t.location!.latitude, t.location!.longitude] as [number, number]);
+    map.fitBounds(bounds, { padding: [60, 60], maxZoom: 14 });
+  }, [trucks]);
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Render
+  // ───────────────────────────────────────────────────────────────────────────
+  const tileProvider = 'OpenStreetMap';
+
+  return (
+    <div
+      className={`relative w-full rounded overflow-hidden border ${className}`}
+      style={{ height, borderColor: 'var(--color-hairline)' }}
+    >
+      {/* Leaflet map canvas */}
+      <div ref={mapContainerRef} className="w-full h-full" style={{ background: '#F7F6F3' }} />
+
+      {/* Floating controls — top-left */}
+      <div className="absolute top-3 left-3 z-[400] flex flex-col gap-2">
+        <button
+          onClick={fitAllTrucks}
+          className="px-3 py-1.5 rounded shadow-sm text-xs font-medium border transition-colors flex items-center gap-1.5"
+          style={{
+            background: 'var(--color-paper)',
+            borderColor: 'var(--color-hairline)',
+            color: 'var(--color-ink)',
+          }}
+          title="Fit all fleet vehicles in view"
+        >
+          <span>🎯</span> Fit All Fleet
+        </button>
+      </div>
+
+      {/* Legend — bottom-left */}
+      <div
+        className="absolute bottom-3 left-3 z-[400] px-3 py-2 rounded shadow-sm text-[11px] border backdrop-blur-sm flex items-center gap-3"
+        style={{
+          background: 'rgba(255,255,255,0.94)',
+          borderColor: 'var(--color-hairline)',
+          color: 'var(--color-slate)',
+        }}
+      >
+        <span className="font-semibold text-xs flex items-center gap-1.5" style={{ color: 'var(--color-ink)' }}>
+          🗺️ {tileProvider}
+        </span>
+        <span className="h-3 w-px bg-neutral-300" />
+        <span className="flex items-center gap-1">
+          <span className="w-2.5 h-2.5 rounded-full" style={{ background: '#2E7D5B' }} /> Available
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-2.5 h-2.5 rounded-full" style={{ background: '#2F5D8A' }} /> On Trip
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-2.5 h-2.5 rounded-full" style={{ background: '#C9962B' }} /> Maintenance
+        </span>
+      </div>
+    </div>
+  );
+}

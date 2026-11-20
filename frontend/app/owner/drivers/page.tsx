@@ -8,6 +8,7 @@ import { Spinner, EmptyState, ErrorAlert, SuccessAlert, Modal } from '@/componen
 
 const NAV = [
   { href: '/owner', label: 'My Fleet', icon: '🚛' },
+  { href: '/owner/tracking', label: 'Live Tracking', icon: '📍' },
   { href: '/owner/drivers', label: 'Drivers', icon: '👤' },
 ];
 

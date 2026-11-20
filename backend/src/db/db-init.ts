@@ -95,6 +95,36 @@ async function initDb() {
     );
   `;
 
+  // Real-time Truck GPS Locations table
+  await sql`
+    CREATE TABLE IF NOT EXISTS truck_locations (
+      truck_id UUID PRIMARY KEY REFERENCES trucks(id) ON DELETE CASCADE,
+      latitude NUMERIC(10,7) NOT NULL,
+      longitude NUMERIC(10,7) NOT NULL,
+      speed_kmh NUMERIC(5,2) DEFAULT 0,
+      heading NUMERIC(5,2) DEFAULT 0,
+      accuracy_m NUMERIC(8,2),
+      recorded_at TIMESTAMP NOT NULL,
+      received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `;
+
+  // Truck Location History (Breadcrumb trails) table
+  await sql`
+    CREATE TABLE IF NOT EXISTS truck_location_history (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      truck_id UUID NOT NULL REFERENCES trucks(id) ON DELETE CASCADE,
+      latitude NUMERIC(10,7) NOT NULL,
+      longitude NUMERIC(10,7) NOT NULL,
+      speed_kmh NUMERIC(5,2) DEFAULT 0,
+      heading NUMERIC(5,2) DEFAULT 0,
+      accuracy_m NUMERIC(8,2),
+      recorded_at TIMESTAMP NOT NULL,
+      received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_truck_loc_history_truck_time ON truck_location_history(truck_id, recorded_at DESC);
+  `;
+
   console.log('2. Seeding initial data (Skill S7)...');
 
   // Check if users already seeded

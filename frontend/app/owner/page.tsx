@@ -9,6 +9,7 @@ import { StatusBadge, Spinner, EmptyState, ErrorAlert, Modal, formatDate, isExpi
 
 const NAV = [
   { href: '/owner', label: 'My Fleet', icon: '🚛' },
+  { href: '/owner/tracking', label: 'Live Tracking', icon: '📍' },
   { href: '/owner/drivers', label: 'Drivers', icon: '👤' },
 ];
 
