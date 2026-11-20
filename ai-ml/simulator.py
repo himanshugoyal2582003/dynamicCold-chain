@@ -169,10 +169,10 @@ class TruckSimulator:
             self.current_temp += correction + drift * 0.05 + random.uniform(-0.05, 0.05)
 
             temp_deviation = abs(self.current_temp - self.target_temp)
-            if temp_deviation > self.profile["tolerance"] * 1.5:
-                self.refrigeration_status = "WARNING"
-            elif temp_deviation > self.profile["tolerance"] * 2.5:
+            if temp_deviation > self.profile["tolerance"] * 2.5:
                 self.refrigeration_status = "CRITICAL"
+            elif temp_deviation > self.profile["tolerance"] * 1.5:
+                self.refrigeration_status = "WARNING"
             else:
                 self.refrigeration_status = "OPTIMAL"
 
