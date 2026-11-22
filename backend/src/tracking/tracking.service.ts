@@ -93,27 +93,28 @@ export class TrackingService {
     const heading = dto.heading ?? 0;
     const accuracyM = dto.accuracy_m ?? null;
 
-    // UPSERT latest position
-    await this.sql(
-      `INSERT INTO truck_locations (truck_id, latitude, longitude, speed_kmh, heading, accuracy_m, recorded_at, received_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)
-       ON CONFLICT (truck_id) DO UPDATE SET
-         latitude    = EXCLUDED.latitude,
-         longitude   = EXCLUDED.longitude,
-         speed_kmh   = EXCLUDED.speed_kmh,
-         heading     = EXCLUDED.heading,
-         accuracy_m  = EXCLUDED.accuracy_m,
-         recorded_at = EXCLUDED.recorded_at,
-         received_at = CURRENT_TIMESTAMP`,
-      [truckId, dto.latitude, dto.longitude, speedKmh, heading, accuracyM, recordedAt.toISOString()],
-    );
-
-    // INSERT into history
-    await this.sql(
-      `INSERT INTO truck_location_history (truck_id, latitude, longitude, speed_kmh, heading, accuracy_m, recorded_at, received_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)`,
-      [truckId, dto.latitude, dto.longitude, speedKmh, heading, accuracyM, recordedAt.toISOString()],
-    );
+    // Persist the latest fix and breadcrumb together so the current position
+    // cannot advance without its corresponding history record.
+    await this.neonService.runTransaction([
+      {
+        text: `INSERT INTO truck_locations (truck_id, latitude, longitude, speed_kmh, heading, accuracy_m, recorded_at, received_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)
+               ON CONFLICT (truck_id) DO UPDATE SET
+                 latitude = EXCLUDED.latitude,
+                 longitude = EXCLUDED.longitude,
+                 speed_kmh = EXCLUDED.speed_kmh,
+                 heading = EXCLUDED.heading,
+                 accuracy_m = EXCLUDED.accuracy_m,
+                 recorded_at = EXCLUDED.recorded_at,
+                 received_at = CURRENT_TIMESTAMP`,
+        values: [truckId, dto.latitude, dto.longitude, speedKmh, heading, accuracyM, recordedAt.toISOString()],
+      },
+      {
+        text: `INSERT INTO truck_location_history (truck_id, latitude, longitude, speed_kmh, heading, accuracy_m, recorded_at, received_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)`,
+        values: [truckId, dto.latitude, dto.longitude, speedKmh, heading, accuracyM, recordedAt.toISOString()],
+      },
+    ]);
 
     // Real-time WebSocket broadcast to admin:fleet, owner:{ownerId}, and truck:{truckId}
     this.trackingGateway.broadcastLocationUpdate(truckId, truck.owner_id, {
@@ -179,6 +180,10 @@ export class TrackingService {
         t.status,
         t.target_temp_c,
         t.iot_connection_number,
+        d.last_seen AS iot_last_seen,
+        d.battery AS iot_battery,
+        d.power_on AS iot_power_on,
+        d.reported_status AS iot_reported_status,
         u_driver.id AS driver_id,
         u_driver.name AS driver_name,
         u_driver.email AS driver_email,
@@ -196,6 +201,7 @@ export class TrackingService {
         tl.received_at
       FROM trucks t
       LEFT JOIN users u_owner ON u_owner.id = t.owner_id
+      LEFT JOIN iot_devices d ON d.connection_number = t.iot_connection_number AND d.active = true
       LEFT JOIN users u_driver ON u_driver.truck_id = t.id AND u_driver.active = true AND u_driver.role = 'truckUser'
       LEFT JOIN trips tr ON tr.truck_id = t.id AND tr.ended_at IS NULL
       LEFT JOIN truck_locations tl ON tl.truck_id = t.id
@@ -229,6 +235,13 @@ export class TrackingService {
         status: row.status,
         target_temp_c: Number(row.target_temp_c),
         iot_connection_number: row.iot_connection_number,
+        iot_status: !row.iot_connection_number ? 'NO DEVICE PAIRED'
+          : String(row.iot_reported_status || '').toLowerCase().includes('error') ? 'ERROR'
+          : String(row.iot_reported_status || '').toLowerCase() === 'warning' ? 'ERROR'
+          : row.iot_battery != null && Number(row.iot_battery) < 20 ? 'LOW BATTERY'
+          : row.iot_last_seen && now.getTime() - new Date(row.iot_last_seen).getTime() <= 120000 && row.iot_power_on ? 'ONLINE' : 'OFFLINE',
+        iot_last_seen: row.iot_last_seen ? new Date(row.iot_last_seen).toISOString() : null,
+        iot_battery: row.iot_battery == null ? null : Number(row.iot_battery),
         driver: row.driver_id
           ? { id: row.driver_id, name: row.driver_name, email: row.driver_email }
           : null,
@@ -482,8 +495,8 @@ export class TrackingService {
   async getFleetSummary(role: string, userId: string) {
     const trucks = await this.getLiveLocations(role, userId);
     const total = trucks.length;
-    const onTrip = trucks.filter((t: any) => t.status === 'on_trip').length;
-    const available = trucks.filter((t: any) => t.status === 'available').length;
+    const onTrip = trucks.filter((t: any) => Boolean(t.active_trip)).length;
+    const available = trucks.filter((t: any) => t.status === 'available' && !t.active_trip).length;
     const maintenance = trucks.filter((t: any) => t.status === 'maintenance').length;
     const gpsLive = trucks.filter((t: any) => t.gps_status === 'live').length;
     const gpsStale = trucks.filter((t: any) => t.gps_status === 'stale').length;
@@ -497,6 +510,8 @@ export class TrackingService {
       gps_live_count: gpsLive,
       gps_stale_count: gpsStale,
       gps_offline_count: gpsNoData,
+      iot_paired_count: trucks.filter((t: any) => Boolean(t.iot_connection_number)).length,
+      iot_unpaired_count: trucks.filter((t: any) => !t.iot_connection_number).length,
     };
   }
 

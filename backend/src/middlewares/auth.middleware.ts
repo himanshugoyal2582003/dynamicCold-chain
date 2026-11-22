@@ -5,7 +5,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
-import { AuthService } from '../auth/auth.service';
+import { AuthService, JwtPayload } from '../auth/auth.service';
 
 // Extend Express Request to carry user payload
 declare global {
@@ -37,16 +37,23 @@ export function extractJwtToken(req: Request): string | null {
 export class AuthGuardMiddleware implements NestMiddleware {
   constructor(private readonly authService: AuthService) {}
 
-  use(req: Request, _res: Response, next: NextFunction) {
+  async use(req: Request, _res: Response, next: NextFunction) {
     const token = extractJwtToken(req);
     if (!token) throw new UnauthorizedException('Authentication required. Missing token in cookie or Authorization header.');
 
+    let verifiedUser: JwtPayload;
     try {
-      req.user = this.authService.verifyToken(token);
-      next();
+      verifiedUser = this.authService.verifyToken(token);
     } catch {
       throw new UnauthorizedException('Invalid or expired session.');
     }
+
+    // The signed token proves identity, but mutable assignment and role data
+    // must come from PostgreSQL so existing sessions see reassignment changes.
+    const currentUser = await this.authService.getMe(verifiedUser.sub);
+    if (!currentUser) throw new UnauthorizedException('User not found or inactive.');
+    req.user = currentUser;
+    next();
   }
 }
 

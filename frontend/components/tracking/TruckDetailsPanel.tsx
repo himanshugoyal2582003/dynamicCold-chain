@@ -76,6 +76,21 @@ export default function TruckDetailsPanel({
         )}
       </div>
 
+      <div className="px-3 py-2.5 rounded border flex items-center justify-between gap-2" style={{ background: 'var(--color-ivory)', borderColor: 'var(--color-hairline)' }}>
+        <div>
+          <p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--color-slate)' }}>IoT Device</p>
+          <p className="text-xs font-mono font-semibold" style={{ color: 'var(--color-ink)' }}>{truck.iot_connection_number || 'No device paired'}</p>
+        </div>
+        <div className="text-right">
+          <p className="text-xs font-bold" style={{ color: truck.iot_status === 'ONLINE' ? '#2E7D5B' : truck.iot_status === 'ERROR' ? '#A3262A' : '#5B6470' }}>
+            {truck.iot_status || (truck.iot_connection_number ? 'OFFLINE' : 'NO DEVICE PAIRED')}
+          </p>
+          <p className="text-[10px]" style={{ color: 'var(--color-slate)' }}>
+            {truck.iot_last_seen ? `Last seen ${formatDateTime(truck.iot_last_seen)}` : 'No device telemetry'}
+          </p>
+        </div>
+      </div>
+
       {/* Real-time GPS Telemetry */}
       <div>
         <div className="flex items-center justify-between mb-2">

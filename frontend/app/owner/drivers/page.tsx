@@ -35,11 +35,14 @@ export default function OwnerDrivers() {
 
   async function loadData() {
     setFetching(true);
+    setError('');
     try {
       const [dList, tList] = await Promise.all([
         apiFetch('/api/owner/drivers'),
-        apiFetch('/api/owner/trucks').catch(() => []),
+        apiFetch('/api/owner/trucks'),
       ]);
+      if (!Array.isArray(dList)) throw new Error('GET /api/owner/drivers returned an invalid driver response.');
+      if (!Array.isArray(tList)) throw new Error('GET /api/owner/trucks returned an invalid truck response.');
       setDrivers(dList);
       setTrucks(tList);
     } catch (e: any) {

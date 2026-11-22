@@ -1,7 +1,10 @@
-import 'dotenv/config';
+import * as dotenv from 'dotenv';
 import { readdir, readFile } from 'fs/promises';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { Pool } from 'pg';
+
+dotenv.config({ path: resolve(__dirname, '../../.env') });
+dotenv.config({ path: resolve(__dirname, '../../../.env.local') });
 
 async function migrate() {
   const connectionString = process.env.DATABASE_URL;

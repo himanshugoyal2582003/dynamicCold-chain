@@ -156,6 +156,25 @@ export async function createInMemoryPostgres() {
     return res.rows;
   };
 
+  runner.runTransaction = async (statements: { text: string; values: unknown[] }[]) => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const results: any[][] = [];
+      for (const statement of statements) {
+        const result = await client.query(statement.text, statement.values);
+        results.push(result.rows);
+      }
+      await client.query('COMMIT');
+      return results;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  };
+
   // Seed demo data
   const defaultPassword = 'password123';
   const passwordHash = await bcrypt.hash(defaultPassword, 10);

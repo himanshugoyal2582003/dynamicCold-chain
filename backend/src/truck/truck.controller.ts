@@ -8,8 +8,13 @@ import { TruckService } from './truck.service';
 function assertTruckUser(req: Request) {
   if (!req.user) throw new UnauthorizedException('Not authenticated.');
   if (req.user.role !== 'truckUser') throw new ForbiddenException('Truck User only.');
-  if (!req.user.truckId) throw new ForbiddenException('No truck assigned to your account.');
   return { userId: req.user.sub, truckId: req.user.truckId };
+}
+
+function assertAssignedTruckUser(req: Request) {
+  const user = assertTruckUser(req);
+  if (!user.truckId) throw new ForbiddenException('No active truck is assigned to your account.');
+  return { ...user, truckId: user.truckId };
 }
 
 @Controller('api/truck')
@@ -18,14 +23,15 @@ export class TruckController {
 
   @Get('my-truck')
   async getMyTruck(@Req() req: Request) {
-    const { truckId } = assertTruckUser(req);
-    return this.truckService.getMyTruck(truckId);
+    const { userId } = assertTruckUser(req);
+    return this.truckService.getMyTruckForDriver(userId);
   }
 
   @Get('active-trip')
   async getActiveTrip(@Req() req: Request) {
     const { truckId } = assertTruckUser(req);
-    return this.truckService.getActiveTrip(truckId);
+    const trip = truckId ? await this.truckService.getActiveTrip(truckId) : null;
+    return { success: true, trip };
   }
 
   @Post('start-trip')
@@ -33,55 +39,55 @@ export class TruckController {
     @Req() req: Request,
     @Body() body: { origin: string; destination: string; cargo_type: string; notes?: string },
   ) {
-    const { userId, truckId } = assertTruckUser(req);
+    const { userId, truckId } = assertAssignedTruckUser(req);
     return this.truckService.startTrip(userId, truckId, body);
   }
 
   @Post('end-trip/:tripId')
   async endTrip(@Req() req: Request, @Param('tripId') tripId: string) {
-    const { userId, truckId } = assertTruckUser(req);
+    const { userId, truckId } = assertAssignedTruckUser(req);
     return this.truckService.endTrip(userId, truckId, tripId);
   }
 
   @Patch('target-temp')
   async setTargetTemp(@Req() req: Request, @Body() body: { targetTempC: number }) {
-    const { truckId } = assertTruckUser(req);
+    const { truckId } = assertAssignedTruckUser(req);
     return this.truckService.setTargetTemp(truckId, body.targetTempC);
   }
 
   @Post('report-issue')
   async reportIssue(@Req() req: Request, @Body() body: { description: string }) {
-    const { userId, truckId } = assertTruckUser(req);
+    const { userId, truckId } = assertAssignedTruckUser(req);
     return this.truckService.reportIssue(userId, truckId, body.description);
   }
 
   @Get('trip-history')
   async getTripHistory(@Req() req: Request) {
-    const { truckId } = assertTruckUser(req);
+    const { truckId } = assertAssignedTruckUser(req);
     return this.truckService.getTripHistory(truckId);
   }
 
   @Get('issues')
   async getIssues(@Req() req: Request) {
-    const { truckId } = assertTruckUser(req);
+    const { truckId } = assertAssignedTruckUser(req);
     return this.truckService.getMyIssues(truckId);
   }
 
   @Get('telemetry')
   async getTelemetry(@Req() req: Request) {
-    const { truckId } = assertTruckUser(req);
+    const { truckId } = assertAssignedTruckUser(req);
     return this.truckService.getTelemetry(truckId);
   }
 
   @Post('connect-iot')
-  async connectIot(@Req() req: Request, @Body() body: { connectionNumber: string }) {
-    const { truckId } = assertTruckUser(req);
-    return this.truckService.connectIot(truckId, body.connectionNumber);
+  connectIot(@Req() req: Request) {
+    assertAssignedTruckUser(req);
+    throw new ForbiddenException('IoT device pairing is managed by an administrator or fleet owner.');
   }
 
   @Post('disconnect-iot')
-  async disconnectIot(@Req() req: Request) {
-    const { truckId } = assertTruckUser(req);
-    return this.truckService.disconnectIot(truckId);
+  disconnectIot(@Req() req: Request) {
+    assertAssignedTruckUser(req);
+    throw new ForbiddenException('IoT device pairing is managed by an administrator or fleet owner.');
   }
 }

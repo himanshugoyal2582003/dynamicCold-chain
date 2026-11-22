@@ -30,7 +30,11 @@ export default function TruckDetail() {
   const [truck, setTruck] = useState<any>(null);
   const [trips, setTrips] = useState<any[]>([]);
   const [drivers, setDrivers] = useState<any[]>([]);
+  const [loadingDrivers, setLoadingDrivers] = useState(false);
+  const [driverLoadError, setDriverLoadError] = useState('');
   const [telemetryHistory, setTelemetryHistory] = useState<any[]>([]);
+  const [telemetryError, setTelemetryError] = useState('');
+  const [historyError, setHistoryError] = useState('');
   const [fetching, setFetching] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -50,6 +54,49 @@ export default function TruckDetail() {
 
   // Live IoT telemetry
   const [iotTelemetry, setIotTelemetry] = useState<any>(null);
+  const [showIotManager, setShowIotManager] = useState(false);
+  const [iotDevices, setIotDevices] = useState<any[]>([]);
+  const [selectedIotCode, setSelectedIotCode] = useState('');
+  const [iotSaving, setIotSaving] = useState(false);
+  const [iotManagerError, setIotManagerError] = useState('');
+
+  useEffect(() => {
+    if (!showIotManager) return;
+    let active = true;
+    setIotManagerError('');
+    setIotDevices([]);
+    apiFetch('/api/iot/devices')
+      .then((response) => {
+        if (!Array.isArray(response?.devices)) throw new Error('The device registry returned an invalid response.');
+        if (active) setIotDevices(response.devices);
+      })
+      .catch((e: any) => { if (active) setIotManagerError(e?.message || 'Could not load registered IoT devices.'); });
+    return () => { active = false; };
+  }, [showIotManager]);
+
+  async function saveIotPairing(action: 'pair' | 'unpair') {
+    if (!truck || iotSaving) return;
+    setIotSaving(true);
+    setIotManagerError('');
+    try {
+      if (action === 'pair') {
+        if (!iotDevices.some((device) => device.connection_number === selectedIotCode && !device.isPaired)) {
+          throw new Error('Select an available registered device.');
+        }
+        await apiFetch('/api/iot/connect', { method: 'POST', body: JSON.stringify({ truckId: truck.id, connectionNumber: selectedIotCode }) });
+        setSuccess(`IoT device ${selectedIotCode} paired successfully.`);
+      } else {
+        await apiFetch('/api/iot/disconnect', { method: 'POST', body: JSON.stringify({ truckId: truck.id }) });
+        setSuccess('IoT device unpaired successfully.');
+      }
+      setShowIotManager(false);
+      await fetchAll();
+    } catch (e: any) {
+      setIotManagerError(e?.message || 'IoT pairing update failed.');
+    } finally {
+      setIotSaving(false);
+    }
+  }
 
   useEffect(() => {
     if (!loading && (!user || user.role !== 'owner')) router.replace('/login');
@@ -57,20 +104,32 @@ export default function TruckDetail() {
 
   async function fetchAll() {
     setFetching(true);
+    setError('');
     try {
-      const [t, tr, d, iot, hist] = await Promise.all([
+      const [t, tr] = await Promise.all([
         apiFetch(`/api/owner/trucks/${id}`),
         apiFetch(`/api/owner/trucks/${id}/trips`),
-        apiFetch('/api/owner/drivers'),
-        apiFetch(`/api/iot/telemetry/${id}`).catch(() => null),
-        apiFetch(`/api/iot/history/${id}`).catch(() => []),
       ]);
       setTruck(t);
       if (t?.target_temp_c) setNewTargetTemp(String(t.target_temp_c));
       setTrips(tr);
-      setDrivers(d.filter((dr: any) => dr.active));
-      if (iot?.telemetry) setIotTelemetry(iot.telemetry);
-      if (Array.isArray(hist)) setTelemetryHistory(hist);
+      const [iotResult, historyResult] = await Promise.allSettled([
+        apiFetch(`/api/iot/telemetry/${id}`),
+        apiFetch(`/api/iot/history/${id}`),
+      ]);
+      if (iotResult.status === 'fulfilled') {
+        setIotTelemetry(iotResult.value?.telemetry || null);
+        setTelemetryError('');
+      } else {
+        setTelemetryError(iotResult.reason?.message || 'Could not load live IoT telemetry.');
+      }
+      if (historyResult.status === 'fulfilled') {
+        if (!Array.isArray(historyResult.value?.history)) throw new Error(`GET /api/iot/history/${id} returned an invalid telemetry history response.`);
+        setTelemetryHistory(historyResult.value.history);
+        setHistoryError('');
+      } else {
+        setHistoryError(historyResult.reason?.message || 'Could not load telemetry history.');
+      }
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -86,11 +145,38 @@ export default function TruckDetail() {
         try {
           const res = await apiFetch(`/api/iot/telemetry/${id}`);
           if (res?.telemetry) setIotTelemetry(res.telemetry);
-        } catch {}
+          setTelemetryError('');
+        } catch (e: any) {
+          setTelemetryError(e?.message || 'Could not refresh live IoT telemetry.');
+        }
       }, 4000);
       return () => clearInterval(timer);
     }
   }, [user, id]);
+
+  // Fetch eligible drivers every time the assignment modal opens. This request
+  // is independent of truck/trip/IoT page loading so one failed request cannot
+  // leave the dropdown silently empty.
+  useEffect(() => {
+    if (!showAssign || !id) return;
+    let active = true;
+    setLoadingDrivers(true);
+    setDriverLoadError('');
+    setDrivers([]);
+    setSelectedDriver('');
+    apiFetch(`/api/owner/trucks/${id}/available-drivers`)
+      .then((rows) => {
+        if (!active) return;
+        if (!Array.isArray(rows)) throw new Error('The driver service returned an invalid response.');
+        setDrivers(rows);
+      })
+      .catch((e: any) => {
+        if (!active) return;
+        setDriverLoadError(e?.message || 'Could not load available drivers.');
+      })
+      .finally(() => { if (active) setLoadingDrivers(false); });
+    return () => { active = false; };
+  }, [showAssign, id]);
 
   async function handleStatusChange(status: string) {
     try {
@@ -107,6 +193,7 @@ export default function TruckDetail() {
 
   async function handleAssignDriver(e: React.FormEvent) {
     e.preventDefault();
+    if (!selectedDriver || loadingDrivers || savingDriver) return;
     setSavingDriver(true);
     setError('');
     try {
@@ -116,7 +203,8 @@ export default function TruckDetail() {
       });
       setSuccess('Driver assigned successfully.');
       setShowAssign(false);
-      fetchAll();
+      setSelectedDriver('');
+      await fetchAll();
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -245,13 +333,12 @@ export default function TruckDetail() {
                 </div>
                 <div className="py-2 flex justify-between items-center">
                   <span className="text-xs text-gray-400">Paired IoT Sensor</span>
-                  {truck.iot_connection_number ? (
-                    <span className="font-mono text-xs font-bold text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-500/30">
-                      {truck.iot_connection_number}
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs font-bold text-emerald-400">
+                      {truck.iot_connection_number || 'NO DEVICE PAIRED'}
                     </span>
-                  ) : (
-                    <span className="text-xs text-gray-500">None</span>
-                  )}
+                    <button type="button" className="btn-ghost text-xs" onClick={() => setShowIotManager(true)}>Manage</button>
+                  </div>
                 </div>
               </div>
 
@@ -433,6 +520,7 @@ export default function TruckDetail() {
                 </p>
               </div>
             )}
+            {telemetryError && <ErrorAlert message={telemetryError} />}
           </div>
 
           {/* 15-Minute Telemetry History Log (Neon DB) */}
@@ -449,7 +537,8 @@ export default function TruckDetail() {
               </span>
             </div>
 
-            {telemetryHistory.length === 0 ? (
+            {historyError && <div className="p-4"><ErrorAlert message={historyError} /></div>}
+            {telemetryHistory.length === 0 && !historyError ? (
               <div className="p-8 text-center text-gray-400 text-sm">
                 <p>No 15-minute telemetry checkpoints recorded yet for this vehicle.</p>
                 <p className="text-xs text-gray-500 mt-1">
@@ -547,7 +636,7 @@ export default function TruckDetail() {
 
       {/* Reassign Driver Modal */}
       {showAssign && (
-        <Modal title="Reassign Driver to Truck" onClose={() => setShowAssign(false)}>
+        <Modal title="Reassign Driver to Truck" onClose={() => { setShowAssign(false); setSelectedDriver(''); }}>
           <form onSubmit={handleAssignDriver} className="space-y-4">
             <div>
               <label className="block text-xs font-medium uppercase tracking-wide text-gray-400 mb-1">
@@ -556,24 +645,52 @@ export default function TruckDetail() {
               <select
                 value={selectedDriver}
                 onChange={e => setSelectedDriver(e.target.value)}
-                required
+                required disabled={loadingDrivers || !!driverLoadError || drivers.length === 0}
                 className="input-field"
               >
-                <option value="">Select a driver…</option>
+                <option value="">{loadingDrivers ? 'Loading drivers…' : driverLoadError ? 'Drivers could not be loaded' : drivers.length ? 'Select a driver…' : 'No available drivers'}</option>
                 {drivers.map(d => (
                   <option key={d.id} value={d.id}>
-                    {d.name} {d.truck_plate ? `(currently on ${d.truck_plate})` : '(unassigned)'}
+                    {d.name} ({d.email}){d.truck_id && d.truck_id !== truck?.id ? ` — transfer from ${d.truck_plate || 'another truck'}` : d.truck_id ? ' — currently assigned here' : ' — unassigned'}
                   </option>
                 ))}
               </select>
+              {loadingDrivers && <p className="text-xs text-gray-400" role="status">Loading eligible fleet drivers…</p>}
+              {driverLoadError && <p className="text-xs text-red-400" role="alert">{driverLoadError}</p>}
             </div>
             <div className="flex justify-end gap-3 pt-2">
-              <button type="button" className="btn-ghost" onClick={() => setShowAssign(false)}>Cancel</button>
-              <button type="submit" className="btn-gold" disabled={savingDriver}>
+              <button type="button" className="btn-ghost" onClick={() => { setShowAssign(false); setSelectedDriver(''); }}>Cancel</button>
+              <button type="submit" className="btn-gold" disabled={savingDriver || loadingDrivers || !!driverLoadError || !selectedDriver}>
                 {savingDriver ? 'Assigning…' : 'Confirm Assignment'}
               </button>
             </div>
           </form>
+        </Modal>
+      )}
+
+      {showIotManager && (
+        <Modal title={`IoT Device · ${truck?.plate_number || 'Truck'}`} onClose={() => setShowIotManager(false)}>
+          <div className="space-y-4">
+            <p className="text-xs text-gray-400">Pairing is stored in PostgreSQL. Device online status depends on recent telemetry.</p>
+            {iotManagerError && <ErrorAlert message={iotManagerError} />}
+            {truck?.iot_connection_number ? (
+              <div className="flex items-center justify-between rounded border border-slate-700 p-3">
+                <span className="font-mono font-semibold">{truck.iot_connection_number}</span>
+                <button type="button" className="btn-ghost" disabled={iotSaving} onClick={() => saveIotPairing('unpair')}>{iotSaving ? 'Saving…' : 'Unpair'}</button>
+              </div>
+            ) : (
+              <>
+                <select className="input-field w-full" value={selectedIotCode} onChange={(e) => setSelectedIotCode(e.target.value)} disabled={!!iotManagerError}>
+                  <option value="">{iotManagerError ? 'Devices unavailable' : iotDevices.filter((d) => !d.isPaired).length ? 'Select registered device…' : 'No available devices'}</option>
+                  {iotDevices.filter((device) => !device.isPaired).map((device) => (
+                    <option key={device.device_id} value={device.connection_number}>{device.name} ({device.connection_number}) · {device.status}</option>
+                  ))}
+                </select>
+                <button type="button" className="btn-gold w-full" disabled={iotSaving || !selectedIotCode} onClick={() => saveIotPairing('pair')}>{iotSaving ? 'Saving…' : 'Pair Device'}</button>
+              </>
+            )}
+            <button type="button" className="btn-ghost w-full" onClick={() => setShowIotManager(false)}>Close</button>
+          </div>
         </Modal>
       )}
 

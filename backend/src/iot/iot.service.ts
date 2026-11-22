@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, NotFoundException, ServiceUnavailableException, ConflictException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { NeonService } from '../neon/neon.service';
 
 export interface EnrichedIoTTelemetry {
@@ -65,9 +65,11 @@ export class IotService implements OnModuleInit {
             this.connectionToTruck.set(row.iot_connection_number, row.id);
           }
         }
+        this.logger.log(`[DB] Loaded ${rows.length} persisted device-to-truck pairings`);
       }
     } catch (e: any) {
-      this.logger.error(`Could not load persisted IoT bindings. Run database migrations before starting the API: ${e.message}`);
+      this.logger.error(`Could not load persisted IoT bindings. Apply the database migrations before starting the API: ${e.message}`);
+      throw new Error('Could not initialize persistent device-to-truck bindings.');
     }
   }
 
@@ -78,28 +80,45 @@ export class IotService implements OnModuleInit {
     const conn = payload.connection_number.trim().toUpperCase();
     payload.connection_number = conn;
 
-    // Check if this connection is bound to a truck
-    const boundTruckId = this.connectionToTruck.get(conn) || payload.truck_id;
-    if (boundTruckId) {
-      payload.truck_id = boundTruckId;
-      this.telemetryByTruckId.set(boundTruckId, payload);
+    const sql = this.neonService.getSql();
+    if (!sql) throw new ServiceUnavailableException('Persistent database is unavailable.');
+    // The connection code and persisted truck pairing are authoritative. Never
+    // accept payload.truck_id as an assignment or allow an unpaired device to
+    // impersonate a truck.
+    const binding = await sql`
+      SELECT t.id AS truck_id FROM iot_devices d
+      JOIN trucks t ON t.iot_connection_number = d.connection_number AND t.active = true
+      WHERE d.connection_number = ${conn} AND d.active = true LIMIT 1;
+    `;
+    const boundTruckId = binding[0]?.truck_id as string | undefined;
+    if (!boundTruckId) throw new ForbiddenException('Device is not registered and paired to an active truck.');
+    payload.truck_id = boundTruckId;
+    this.connectionToTruck.set(conn, boundTruckId);
+    this.truckToConnection.set(boundTruckId, conn);
+    this.telemetryByTruckId.set(boundTruckId, payload);
+    await sql`
+      UPDATE iot_devices SET last_seen = NOW(), battery = ${Number.isFinite(payload.battery) ? payload.battery : null},
+        reported_status = ${String(payload.status || 'online').toLowerCase()}, updated_at = NOW()
+      WHERE connection_number = ${conn};
+    `;
 
-      // Record snapshot to Neon Postgres every 15 minutes (or first time)
-      const now = Date.now();
-      const lastSaved = this.lastDbSnapshotTime.get(boundTruckId) || 0;
-      if (now - lastSaved >= this.SNAPSHOT_INTERVAL_MS || lastSaved === 0) {
-        this.lastDbSnapshotTime.set(boundTruckId, now);
-        this.saveSnapshotToDb(boundTruckId, payload).catch((e) =>
-          this.logger.warn(`Failed to save 15-min snapshot: ${e.message}`),
-        );
-      }
+    // Persist only real reported coordinates and speed. Missing telemetry stays
+    // NULL instead of being replaced by a fabricated location or speed.
+    const now = Date.now();
+    const lastSaved = this.lastDbSnapshotTime.get(boundTruckId) || 0;
+    if (now - lastSaved >= this.SNAPSHOT_INTERVAL_MS || lastSaved === 0) {
+      this.lastDbSnapshotTime.set(boundTruckId, now);
+      this.saveSnapshotToDb(boundTruckId, payload).catch((e) => {
+        if (this.lastDbSnapshotTime.get(boundTruckId) === now) this.lastDbSnapshotTime.delete(boundTruckId);
+        this.logger.warn(`[DB] Failed to persist telemetry snapshot; it will retry on a later ingest: ${e.message}`);
+      });
     }
 
     this.telemetryByConnection.set(conn, payload);
     return {
       success: true,
       connection_number: conn,
-      truck_id: boundTruckId || null,
+      truck_id: boundTruckId,
       spoilage_risk: payload.spoilage_risk,
       spoilage_risk_level: payload.spoilage_risk_level,
     };
@@ -107,7 +126,7 @@ export class IotService implements OnModuleInit {
 
   private async saveSnapshotToDb(truckId: string, p: EnrichedIoTTelemetry) {
     const sql = this.neonService.getSql();
-    if (!sql) return;
+    if (!sql) throw new ServiceUnavailableException('Persistent database is unavailable.');
 
     try {
       const activeTrip = await sql`
@@ -123,13 +142,16 @@ export class IotService implements OnModuleInit {
         ) VALUES (
           ${tripId}, ${truckId}::uuid, ${p.device_id}, ${p.connection_number},
           ${p.temperature}, ${p.target_temp}, ${p.humidity}, ${p.battery},
-          ${p.door_open}, ${p.gps?.lat || 19.0760}, ${p.gps?.lng || 72.8777},
-          ${p.gps?.speed_kmh || 45.0}, ${p.spoilage_risk}, ${p.spoilage_risk_level},
+          ${p.door_open}, ${Number.isFinite(p.gps?.lat) && p.gps.lat >= -90 && p.gps.lat <= 90 ? p.gps.lat : null},
+          ${Number.isFinite(p.gps?.lng) && p.gps.lng >= -180 && p.gps.lng <= 180 ? p.gps.lng : null},
+          ${Number.isFinite(p.gps?.speed_kmh) && p.gps.speed_kmh >= 0 ? p.gps.speed_kmh : null},
+          ${p.spoilage_risk}, ${p.spoilage_risk_level},
           ${p.shelf_life_remaining_hours}, ${p.quality_retention_pct}, ${p.route_recommendation}
         );
       `;
     } catch (e: any) {
-      this.logger.warn(`Error persisting snapshot to Neon DB: ${e.message}`);
+      this.logger.warn(`[DB] Telemetry snapshot INSERT failed: ${e.message}`);
+      throw e;
     }
   }
 
@@ -232,25 +254,149 @@ export class IotService implements OnModuleInit {
     return aiResponse;
   }
 
-  // Get active online simulated IoT devices
-  getActiveDevices() {
-    const list: any[] = [];
-    for (const [conn, tel] of this.telemetryByConnection.entries()) {
-      const boundTruck = this.connectionToTruck.get(conn);
-      list.push({
-        ...tel,
-        boundTruckId: boundTruck || null,
-        isPaired: Boolean(boundTruck),
-      });
+  async syncDeviceRegistry(devices: Array<{
+    id: string; connectionNumber: string; name: string; productType?: string;
+    battery?: number; powerOn?: boolean; status?: string;
+  }>, removedDeviceIds: string[] = []) {
+    const sql = this.neonService.getSql();
+    if (!sql) throw new ServiceUnavailableException('Persistent database is unavailable.');
+    if (!Array.isArray(devices) || devices.length > 200) throw new BadRequestException('Invalid IoT device registry payload.');
+    const normalized = devices.map((device) => {
+      const deviceId = String(device?.id || '').trim();
+      const connectionNumber = String(device?.connectionNumber || '').trim().toUpperCase();
+      if (!deviceId || !connectionNumber || deviceId.length > 100 || connectionNumber.length > 50) {
+        throw new BadRequestException('Every registered device requires a valid ID and connection code.');
+      }
+      const battery = device.battery == null ? null : Number(device.battery);
+      if (battery != null && (!Number.isFinite(battery) || battery < 0 || battery > 100)) {
+        throw new BadRequestException(`Invalid battery level for device ${deviceId}.`);
+      }
+      return {
+        id: deviceId, connection: connectionNumber,
+        name: String(device.name || deviceId).slice(0, 150),
+        product: device.productType ? String(device.productType).slice(0, 150) : null,
+        battery, powerOn: device.powerOn === true,
+        status: String(device.status || 'offline').toLowerCase().slice(0, 30),
+      };
+    });
+    if (new Set(normalized.map((d) => d.id)).size !== normalized.length
+      || new Set(normalized.map((d) => d.connection)).size !== normalized.length) {
+      throw new ConflictException('Device IDs and connection codes must be unique.');
     }
-    return list;
+    const statements: Array<{ text: string; values: unknown[] }> = [
+      ...(removedDeviceIds.length ? [{
+        text: 'UPDATE iot_devices SET active = false, updated_at = NOW() WHERE device_id = ANY($1::varchar[])',
+        values: [removedDeviceIds],
+      }] : []),
+      ...normalized.map((device) => ({
+        text: `INSERT INTO iot_devices (device_id, connection_number, name, product_type, battery, power_on, reported_status, active, updated_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, true, NOW())
+               ON CONFLICT (device_id) DO UPDATE SET connection_number = EXCLUDED.connection_number,
+                 name = EXCLUDED.name, product_type = EXCLUDED.product_type,
+                 battery = COALESCE(EXCLUDED.battery, iot_devices.battery), power_on = EXCLUDED.power_on,
+                 reported_status = EXCLUDED.reported_status, active = true, updated_at = NOW()`,
+        values: [device.id, device.connection, device.name, device.product, device.battery, device.powerOn, device.status],
+      })),
+    ];
+    try {
+      await this.neonService.runTransaction(statements);
+    } catch (error: any) {
+      if (error?.code === '23505') throw new ConflictException('An IoT connection code is already registered to another device.');
+      throw error;
+    }
+    return { success: true, registered: normalized.length };
   }
 
-  // Connect a truck to an IoT connection number
-  async connectDevice(truckId: string, rawConnectionNumber: string) {
-    const conn = rawConnectionNumber.trim().toUpperCase();
+  async getDevices(user: { sub: string; role: string; truckId?: string | null }) {
+    const sql = this.neonService.getSql();
+    if (!sql) throw new ServiceUnavailableException('Persistent database is unavailable.');
+    let rows: any[];
+    if (user.role === 'admin') {
+      rows = await sql`SELECT d.*, t.id AS paired_truck_id, t.plate_number
+        FROM iot_devices d LEFT JOIN trucks t ON t.iot_connection_number = d.connection_number
+        WHERE d.active = true ORDER BY d.name;`;
+    } else if (user.role === 'owner') {
+      rows = await sql`SELECT d.*, t.id AS paired_truck_id, t.plate_number
+        FROM iot_devices d LEFT JOIN trucks t ON t.iot_connection_number = d.connection_number
+        WHERE d.active = true AND (t.owner_id = ${user.sub}::uuid OR t.id IS NULL) ORDER BY d.name;`;
+    } else if (user.role === 'truckUser' && user.truckId) {
+      rows = await sql`SELECT d.*, t.id AS paired_truck_id, t.plate_number
+        FROM iot_devices d JOIN trucks t ON t.iot_connection_number = d.connection_number
+        WHERE d.active = true AND t.id = ${user.truckId}::uuid ORDER BY d.name;`;
+    } else {
+      throw new ForbiddenException('No device access is available for this account.');
+    }
+    const onlineWindow = 2 * 60 * 1000;
+    const now = Date.now();
+    return rows.map((row) => {
+      const lastSeen = row.last_seen ? new Date(row.last_seen) : null;
+      const online = Boolean(lastSeen && now - lastSeen.getTime() <= onlineWindow && row.power_on);
+      const battery = row.battery == null ? null : Number(row.battery);
+      const reported = String(row.reported_status || '').toLowerCase();
+      const deviceStatus = reported.includes('error') || reported === 'warning' ? 'ERROR'
+        : battery !== null && battery < 20 ? 'LOW BATTERY'
+        : online ? 'ONLINE' : 'OFFLINE';
+      return {
+        device_id: row.device_id,
+        name: row.name,
+        product_type: row.product_type,
+        connection_number: row.connection_number,
+        battery,
+        last_seen: lastSeen?.toISOString() || null,
+        status: deviceStatus,
+        pairing_status: row.paired_truck_id ? 'PAIRED' : 'UNPAIRED',
+        boundTruckId: row.paired_truck_id || null,
+        plate_number: row.plate_number || null,
+        isPaired: Boolean(row.paired_truck_id),
+      };
+    });
+  }
 
-    // Store in-memory
+  // Connect a registered device to one active truck; a unique truck column
+  // enforces single assignment under concurrent requests.
+  async connectDevice(truckId: string, rawConnectionNumber: string, actorId: string) {
+    const conn = rawConnectionNumber.trim().toUpperCase();
+    if (!conn) throw new BadRequestException('A device connection code is required.');
+    if (!this.neonService.getSql()) throw new ServiceUnavailableException('Persistent database is unavailable.');
+    let results: any[][];
+    try {
+      results = await this.neonService.runTransaction([
+        {
+          text: `SELECT id FROM trucks WHERE id = $1 AND active = true FOR UPDATE`,
+          values: [truckId],
+        },
+        {
+          text: `SELECT device_id FROM iot_devices WHERE connection_number = $1 AND active = true FOR UPDATE`,
+          values: [conn],
+        },
+        {
+          text: `SELECT id FROM trucks WHERE iot_connection_number = $1 AND id <> $2 FOR UPDATE`,
+          values: [conn, truckId],
+        },
+        {
+          text: `UPDATE trucks SET iot_connection_number = $1 WHERE id = $2 AND active = true
+                 AND EXISTS (SELECT 1 FROM iot_devices WHERE connection_number = $1 AND active = true)
+                 AND NOT EXISTS (SELECT 1 FROM trucks WHERE iot_connection_number = $1 AND id <> $2)
+                 RETURNING id`,
+          values: [conn, truckId],
+        },
+        {
+          text: `INSERT INTO activity_log (actor_id, action, entity, entity_id, details)
+                 SELECT $1::uuid, 'iot_device_paired', 'truck', id, $3::jsonb
+                 FROM trucks WHERE id = $2::uuid AND iot_connection_number = $4`,
+          values: [actorId, truckId, JSON.stringify({ connection_number: conn }), conn],
+        },
+      ]);
+    } catch (error: any) {
+      if (error?.code === '23505') throw new ConflictException('This device connection is already assigned.');
+      throw error;
+    }
+    if (!results[0]?.length || !results[3]?.length) throw new NotFoundException('Active truck not found.');
+    if (!results[1]?.length) throw new NotFoundException('Registered IoT device not found.');
+    if (results[2]?.length) throw new ConflictException('This device is already assigned to another truck.');
+
+    const previousConnection = this.truckToConnection.get(truckId);
+    if (previousConnection && previousConnection !== conn) this.connectionToTruck.delete(previousConnection);
     this.truckToConnection.set(truckId, conn);
     this.connectionToTruck.set(conn, truckId);
 
@@ -261,16 +407,7 @@ export class IotService implements OnModuleInit {
       this.telemetryByTruckId.set(truckId, existing);
     }
 
-    // Persist in DB
-    try {
-      const sql = this.neonService.getSql();
-      if (sql) {
-        await sql`UPDATE trucks SET iot_connection_number = ${conn} WHERE id = ${truckId}::uuid;`;
-      }
-    } catch (e: any) {
-      this.logger.warn(`Could not persist iot_connection_number in DB: ${e.message}`);
-    }
-
+    this.logger.log('[DB] Device-to-truck pairing UPDATE successful');
     return {
       success: true,
       message: `Truck successfully connected to IoT Device ${conn}`,
@@ -281,7 +418,23 @@ export class IotService implements OnModuleInit {
   }
 
   // Disconnect truck from IoT device
-  async disconnectDevice(truckId: string) {
+  async disconnectDevice(truckId: string, actorId: string) {
+    const sql = this.neonService.getSql();
+    if (!sql) throw new ServiceUnavailableException('Persistent database is unavailable.');
+    const results = await this.neonService.runTransaction([{
+      text: `WITH prior AS (
+               SELECT id, iot_connection_number FROM trucks WHERE id = $1::uuid AND active = true FOR UPDATE
+             ), updated AS (
+               UPDATE trucks SET iot_connection_number = NULL FROM prior
+               WHERE trucks.id = prior.id RETURNING trucks.id, prior.iot_connection_number AS old_connection
+             ), logged AS (
+               INSERT INTO activity_log (actor_id, action, entity, entity_id, details)
+               SELECT $2::uuid, 'iot_device_unpaired', 'truck', id,
+                 jsonb_build_object('connection_number', old_connection) FROM updated
+             ) SELECT id FROM updated`,
+      values: [truckId, actorId],
+    }]);
+    if (!results[0]?.length) throw new NotFoundException('Active truck not found.');
     const conn = this.truckToConnection.get(truckId);
     if (conn) {
       this.connectionToTruck.delete(conn);
@@ -289,15 +442,7 @@ export class IotService implements OnModuleInit {
     this.truckToConnection.delete(truckId);
     this.telemetryByTruckId.delete(truckId);
 
-    try {
-      const sql = this.neonService.getSql();
-      if (sql) {
-        await sql`UPDATE trucks SET iot_connection_number = NULL WHERE id = ${truckId}::uuid;`;
-      }
-    } catch (e: any) {
-      this.logger.warn(`Could not clear iot_connection_number in DB: ${e.message}`);
-    }
-
+    this.logger.log('[DB] Device-to-truck pairing DELETE successful');
     return { success: true, message: 'IoT device disconnected' };
   }
 

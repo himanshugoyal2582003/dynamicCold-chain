@@ -15,6 +15,30 @@ export class TruckService {
     return s;
   }
 
+  async getMyTruckForDriver(driverId: string) {
+    const rows = await this.sql(
+      `SELECT u.id AS assignment_driver_id, u.name AS assignment_driver_name,
+              u.email AS assignment_driver_email, t.*,
+              CASE WHEN t.insurance_expiry <= CURRENT_DATE + INTERVAL '7 days' THEN true ELSE false END AS insurance_expiring,
+              CASE WHEN t.permit_expiry <= CURRENT_DATE + INTERVAL '7 days' THEN true ELSE false END AS permit_expiring,
+              CASE WHEN t.fitness_expiry <= CURRENT_DATE + INTERVAL '7 days' THEN true ELSE false END AS fitness_expiring
+       FROM users u
+       LEFT JOIN trucks t ON t.id = u.truck_id AND t.owner_id = u.owner_id AND t.active = true
+       WHERE u.id = $1 AND u.role = 'truckUser' AND u.active = true
+       LIMIT 1`,
+      [driverId],
+    );
+    if (!rows.length) return null;
+    const row = rows[0];
+    const driver = {
+      id: row.assignment_driver_id,
+      name: row.assignment_driver_name,
+      email: row.assignment_driver_email,
+    };
+    const { assignment_driver_id, assignment_driver_name, assignment_driver_email, ...truckFields } = row;
+    return { driver, truck: truckFields.id ? truckFields : null };
+  }
+
   async getMyTruck(truckId: string) {
     const rows = await this.sql(
       `SELECT t.*,
@@ -115,19 +139,9 @@ export class TruckService {
     );
   }
 
-  async connectIot(truckId: string, connectionNumber: string) {
-    return this.iotService.connectDevice(truckId, connectionNumber);
-  }
-
-  async disconnectIot(truckId: string) {
-    return this.iotService.disconnectDevice(truckId);
-  }
-
   async getTelemetry(truckId: string) {
     const truck = await this.getMyTruck(truckId);
     if (!truck) throw new BadRequestException('Truck not found.');
-    const plate = truck.plate_number;
-
     // 1. Check if an active IoT device is paired to this truck
     const iotData = this.iotService.getTelemetryForTruck(truckId);
     const connNumber = this.iotService.getConnectionForTruck(truckId) || truck.iot_connection_number;
@@ -139,43 +153,23 @@ export class TruckService {
         latest: {
           ...iotData,
           truck_id: truckId,
-          plate_number: plate,
+          plate_number: truck.plate_number,
         },
         history: [],
       };
     }
 
-    // 2. Query AI-ML service directly
-    try {
-      const res = await fetch(`http://localhost:8000/api/trucks/${plate}/telemetry`);
-      if (res.ok) {
-        const data = await res.json();
-        return {
-          isIotConnected: false,
-          connectionNumber: connNumber || null,
-          ...data,
-        };
-      }
-    } catch {
-      // Fallback if AI-ML service is temporarily unreachable
-    }
-
+    // Return persisted telemetry only. Never synthesize cargo readings or
+    // coordinates for a truck whose paired device has no live report.
+    const history = await this.sql(
+      `SELECT * FROM trip_telemetry_history WHERE truck_id = $1 ORDER BY recorded_at DESC LIMIT 30`,
+      [truckId],
+    );
     return {
       isIotConnected: false,
       connectionNumber: connNumber || null,
-      latest: {
-        truck_id: truckId,
-        plate_number: plate,
-        temperature: Number(truck.target_temp_c) || 4.0,
-        target_temp: Number(truck.target_temp_c) || 4.0,
-        humidity: 62.0,
-        refrigeration_status: 'OPTIMAL',
-        spoilage_risk: 0.08,
-        spoilage_risk_level: 'LOW',
-        shelf_life_remaining_hours: 96.0,
-        timestamp: new Date().toISOString(),
-      },
-      history: [],
+      latest: history[0] || null,
+      history,
     };
   }
 }

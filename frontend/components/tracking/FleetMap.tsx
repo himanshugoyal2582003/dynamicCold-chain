@@ -14,6 +14,11 @@ export interface MapTruck {
   target_temp_c?: number;
   current_temp?: number;
   gps_status?: 'live' | 'stale' | 'no_data' | string;
+  iot_connection_number?: string | null;
+  iot_status?: string;
+  iot_last_seen?: string | null;
+  iot_battery?: number | null;
+  last_seen?: string | null;
   location?: {
     latitude: number;
     longitude: number;
@@ -61,15 +66,33 @@ function getStatusColor(status: string): string {
   }
 }
 
+function hasValidLocation(truck: MapTruck): boolean {
+  const location = truck.location;
+  return Boolean(location && Number.isFinite(location.latitude) && Number.isFinite(location.longitude)
+    && location.latitude >= -90 && location.latitude <= 90
+    && location.longitude >= -180 && location.longitude <= 180);
+}
+
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   })[character] as string);
 }
 
+function buildTruckPopupHtml(truck: MapTruck): string {
+  const gps = truck.gps_status === 'live' ? 'GPS online' : truck.location ? 'GPS offline · last known location' : 'GPS unavailable';
+  const device = truck.iot_connection_number
+    ? `${escapeHtml(truck.iot_status || 'PAIRED')} · ${escapeHtml(truck.iot_connection_number)}`
+    : 'NO DEVICE PAIRED';
+  const lastSeen = truck.last_seen ? new Date(truck.last_seen).toLocaleString() : 'No telemetry received';
+  return `<strong>${escapeHtml(truck.plate_number)}</strong><br/>Status: ${escapeHtml(truck.status)}<br/>${gps}<br/>IoT: ${device}<br/>Last telemetry: ${escapeHtml(lastSeen)}`;
+}
+
 function buildTruckIconHtml(truck: MapTruck, isSelected: boolean): string {
-  const color = getStatusColor(truck.status);
-  const isGpsActive = truck.gps_status === 'live';
+  const color = truck.gps_status !== 'live'
+    ? '#7C8798'
+    : getStatusColor(truck.status);
+    const isGpsActive = truck.gps_status === 'live';
   const pulseHtml =
     truck.status === 'on_trip' && isGpsActive
       ? `<div class="absolute -inset-1.5 rounded-full animate-ping opacity-30" style="background:${color}"></div>`
@@ -90,6 +113,7 @@ function buildTruckIconHtml(truck: MapTruck, isSelected: boolean): string {
            style="background:#14171C;color:#FFFFFF;border:1px solid #E3E1DC;">
         ${escapeHtml(truck.plate_number)}
       </div>
+      ${truck.iot_connection_number ? '' : '<div style="font:700 8px sans-serif;color:#9A3412;background:#FFF7ED;padding:1px 4px;border-radius:4px;white-space:nowrap">NO IoT</div>'}
     </div>
   `;
 }
@@ -117,6 +141,8 @@ export default function FleetMap({
   const mapReadyRef       = useRef(false);
   const [mapReady, setMapReady] = useState(false);
   const markersRef        = useRef<Map<string, any>>(new Map());
+  const trucksRef = useRef(trucks);
+  const lastFitSignatureRef = useRef('');
   const polylineRef       = useRef<any>(null);
   const casingRef         = useRef<any>(null);
   const remainingPolylineRef = useRef<any>(null);
@@ -125,6 +151,7 @@ export default function FleetMap({
   // Keep latest callback in a ref so effects don't re-subscribe on every render
   const onSelectTruckRef = useRef(onSelectTruck);
   useEffect(() => { onSelectTruckRef.current = onSelectTruck; }, [onSelectTruck]);
+  useEffect(() => { trucksRef.current = trucks; }, [trucks]);
 
   // ───────────────────────────────────────────────────────────────────────────
   // 1. Initialize Leaflet map (once, client-side only)
@@ -212,14 +239,11 @@ export default function FleetMap({
       const L = (await import('leaflet')).default;
       const locatedTrucks = trucks.filter(
         (t) =>
-          t.location &&
-          typeof t.location.latitude === 'number' &&
-          typeof t.location.longitude === 'number' &&
-          !isNaN(t.location.latitude) &&
-          !isNaN(t.location.longitude)
+        hasValidLocation(t)
       );
 
       const seenIds = new Set<string>();
+      const fitSignature = locatedTrucks.map((t) => t.truck_id).sort().join('|');
 
       locatedTrucks.forEach((t) => {
         const id = t.truck_id;
@@ -240,10 +264,14 @@ export default function FleetMap({
           const marker = markersRef.current.get(id);
           marker.setLatLng([lat, lng]);
           marker.setIcon(icon);
+          marker.unbindPopup();
+          marker.bindPopup(buildTruckPopupHtml(t));
         } else {
           const marker = L.marker([lat, lng], { icon });
+          marker.bindPopup(buildTruckPopupHtml(t));
           marker.on('click', () => {
-            if (onSelectTruckRef.current) onSelectTruckRef.current(t);
+            const currentTruck = trucksRef.current.find((item) => item.truck_id === id) || t;
+            if (onSelectTruckRef.current) onSelectTruckRef.current(currentTruck);
           });
           marker.addTo(map);
           markersRef.current.set(id, marker);
@@ -257,6 +285,12 @@ export default function FleetMap({
           markersRef.current.delete(id);
         }
       });
+      if (fitSignature !== lastFitSignatureRef.current && locatedTrucks.length) {
+        lastFitSignatureRef.current = fitSignature;
+        map.fitBounds(locatedTrucks.map((t) => [t.location!.latitude, t.location!.longitude]), {
+          padding: [55, 55], maxZoom: 12,
+        });
+      }
     };
 
     syncMarkers().catch(console.error);
@@ -372,12 +406,7 @@ export default function FleetMap({
   const fitAllTrucks = useCallback(() => {
     const map = mapRef.current;
     if (!map) return;
-    const locatedTrucks = trucks.filter(
-      (t) =>
-        t.location &&
-        typeof t.location.latitude === 'number' &&
-        typeof t.location.longitude === 'number'
-    );
+    const locatedTrucks = trucks.filter(hasValidLocation);
     if (locatedTrucks.length === 0) return;
     const bounds = locatedTrucks.map((t) => [t.location!.latitude, t.location!.longitude] as [number, number]);
     map.fitBounds(bounds, { padding: [60, 60], maxZoom: 14 });

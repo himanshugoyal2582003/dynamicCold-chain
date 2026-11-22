@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getDeviceStore, setDeviceStore, stepDeviceSimulation, IoTDevice } from '@/lib/device-data';
+import { syncDeviceRegistry } from '@/lib/device-registry-sync';
 
 const AIML_API_URL = process.env.AIML_API_URL || 'http://localhost:8000/api/iot/process';
 const AIML_SERVICE_TOKEN = process.env.AIML_SERVICE_TOKEN;
@@ -95,6 +96,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
     const store = getDeviceStore();
+    await syncDeviceRegistry(store);
     const { deviceId } = body;
 
     if (deviceId) {

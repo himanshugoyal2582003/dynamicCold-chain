@@ -6,9 +6,11 @@ import {
   initialDevices,
   IoTDevice,
 } from '@/lib/device-data';
+import { syncDeviceRegistry } from '@/lib/device-registry-sync';
 
 export async function GET() {
   const devices = getDeviceStore();
+  await syncDeviceRegistry(devices);
   const onlineCount = devices.filter((d) => d.powerOn && d.status !== 'offline').length;
   const warningCount = devices.filter((d) => d.status === 'warning').length;
   const avgTemp = devices.length
@@ -47,17 +49,22 @@ export async function POST(request: Request) {
       while (store.length < targetCount) {
         createNewDevice({});
       }
+      const removedDeviceIds = store.slice(targetCount).map((device) => device.id);
       if (store.length > targetCount) {
         store.splice(targetCount);
         setDeviceStore(store);
       }
-      return NextResponse.json({ success: true, devices: getDeviceStore() });
+      const devices = getDeviceStore();
+      await syncDeviceRegistry(devices, removedDeviceIds);
+      return NextResponse.json({ success: true, devices });
     }
 
     // 2. Reset to initial demo fleet
     if (body.action === 'reset_demo') {
       const reset = JSON.parse(JSON.stringify(initialDevices));
+      const removedDeviceIds = store.filter((device) => !reset.some((candidate: IoTDevice) => candidate.id === device.id)).map((device) => device.id);
       setDeviceStore(reset);
+      await syncDeviceRegistry(reset, removedDeviceIds);
       return NextResponse.json({ success: true, devices: reset });
     }
 
@@ -67,8 +74,9 @@ export async function POST(request: Request) {
       productType: body.productType,
       targetTemp: body.targetTemp,
     });
-
-    return NextResponse.json({ success: true, device: created, devices: getDeviceStore() });
+    const devices = getDeviceStore();
+    await syncDeviceRegistry(devices);
+    return NextResponse.json({ success: true, device: created, devices });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 400 });
   }
@@ -105,6 +113,7 @@ export async function PATCH(request: Request) {
     }
 
     setDeviceStore(store);
+    await syncDeviceRegistry(store);
     return NextResponse.json({ success: true, device });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 400 });
@@ -122,6 +131,7 @@ export async function DELETE(request: Request) {
     const store = getDeviceStore();
     const filtered = store.filter((d) => d.id !== id);
     setDeviceStore(filtered);
+    await syncDeviceRegistry(filtered, [id]);
 
     return NextResponse.json({ success: true, devices: filtered });
   } catch (err: any) {

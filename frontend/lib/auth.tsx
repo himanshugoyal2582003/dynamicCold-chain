@@ -2,16 +2,8 @@
 
 import { createContext, useContext, useEffect, useState, useRef, useCallback, ReactNode } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-
-function getCsrfToken(): string | undefined {
-  if (typeof document === 'undefined') return undefined;
-  return document.cookie
-    .split('; ')
-    .find((cookie) => cookie.startsWith('coldchain_csrf='))
-    ?.split('=')[1];
-}
+import { apiFetch } from './api-client';
+export { apiFetch } from './api-client';
 
 // Inactivity timeout: 15 minutes of idle time
 const IDLE_TIMEOUT_MS = 15 * 60 * 1000;
@@ -51,10 +43,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async (reason?: string | any) => {
     try {
-      await fetch(`${API}/api/auth/logout`, {
+      await apiFetch('/api/auth/logout', {
         method: 'POST',
-        credentials: 'include',
-        headers: getCsrfToken() ? { 'X-CSRF-Token': getCsrfToken()! } : {},
+        redirectOnUnauthorized: false,
       });
     } catch {
       // Ignore network errors on logout
@@ -111,16 +102,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Fetch initial profile
   async function fetchMe() {
     try {
-      const res = await fetch(`${API}/api/auth/me`, {
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setUser(data.user);
-      } else {
-        setUser(null);
-      }
+      const data = await apiFetch('/api/auth/me', { redirectOnUnauthorized: false });
+      if (!data?.user) throw new Error('Profile endpoint returned no user.');
+      setUser(data.user);
     } catch {
       setUser(null);
     } finally {
@@ -157,19 +141,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user, loading, pathname, router]);
 
   async function login(email: string, password: string) {
-    const res = await fetch(`${API}/api/auth/login`, {
+    const data = await apiFetch('/api/auth/login', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
       body: JSON.stringify({ email, password }),
+      redirectOnUnauthorized: false,
     });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ message: 'Sign in failed' }));
-      throw new Error(err.message || 'Login failed');
-    }
-
-    const data = await res.json();
+    if (!data?.user) throw new Error('Sign in response did not contain a user profile.');
     setUser(data.user);
     lastActivityRef.current = Date.now();
 
@@ -260,35 +237,4 @@ export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth must be inside AuthProvider');
   return ctx;
-}
-
-export async function apiFetch(path: string, options?: RequestInit) {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(getCsrfToken() ? { 'X-CSRF-Token': getCsrfToken()! } : {}),
-    ...((options?.headers as Record<string, string>) || {}),
-  };
-
-  const res = await fetch(`${API}${path}`, {
-    credentials: 'include',
-    ...options,
-    headers,
-  });
-
-  if (res.status === 401) {
-    if (typeof window !== 'undefined') window.location.href = '/login?reason=unauthorized';
-    throw new Error('Authentication required. Session expired.');
-  }
-
-  if (res.status === 403) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || 'Access Denied: You do not have permission to access this resource.');
-  }
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ message: 'Request failed' }));
-    throw new Error(err.message || `Error ${res.status}`);
-  }
-
-  return res.json();
 }

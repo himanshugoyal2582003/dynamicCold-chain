@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Patch, Post, Body, Param, Req, UnauthorizedException, ForbiddenException,
+  Controller, Get, Patch, Post, Body, Param, Req, UnauthorizedException, ForbiddenException, BadRequestException,
 } from '@nestjs/common';
 import { Request } from 'express';
 import { OwnerService } from './owner.service';
@@ -41,7 +41,14 @@ export class OwnerController {
   @Post('trucks/:id/assign-driver')
   async assignDriver(@Req() req: Request, @Param('id') id: string, @Body() body: { driverId: string }) {
     const ownerId = assertOwner(req);
+    if (!body?.driverId) throw new BadRequestException('A driver must be selected.');
     return this.ownerService.assignDriver(ownerId, id, body.driverId);
+  }
+
+  @Get('trucks/:id/available-drivers')
+  async getAvailableDrivers(@Req() req: Request, @Param('id') id: string) {
+    const ownerId = assertOwner(req);
+    return this.ownerService.getAvailableDrivers(ownerId, id);
   }
 
   @Get('drivers')

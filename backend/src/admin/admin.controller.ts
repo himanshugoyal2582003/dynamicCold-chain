@@ -1,6 +1,6 @@
 import {
-  Controller, Get, Post, Patch, Body, Param, Req, UseGuards,
-  ForbiddenException, UnauthorizedException,
+  Controller, Get, Post, Patch, Body, Param, Req, Query, Logger,
+  ForbiddenException, UnauthorizedException, BadRequestException,
 } from '@nestjs/common';
 import { Request } from 'express';
 import { AdminService } from './admin.service';
@@ -14,6 +14,7 @@ function assertAdmin(req: Request) {
 
 @Controller('api/admin')
 export class AdminController {
+  private readonly logger = new Logger(AdminController.name);
   constructor(private readonly adminService: AdminService) {}
 
   // ─── METRICS ──────────────────────────────────────────────────────────────
@@ -25,14 +26,17 @@ export class AdminController {
 
   // ─── OWNERS ───────────────────────────────────────────────────────────────
   @Get('owners')
-  async listOwners(@Req() req: Request) {
+  async listOwners(@Req() req: Request, @Query('active') activeOnly?: string) {
     assertAdmin(req);
-    return this.adminService.listOwners();
+    return this.adminService.listOwners(activeOnly === 'true');
   }
 
   @Post('owners')
   async createOwner(@Req() req: Request, @Body() body: { name: string; email: string; password: string }) {
     assertAdmin(req);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      throw new BadRequestException('Owner details are required.');
+    }
     const owner = await this.adminService.createOwner(body.name, body.email, body.password);
     await this.adminService.logActivity(req.user!.sub, 'CREATE_OWNER', 'USER', owner.id, { name: owner.name });
     return owner;
@@ -50,12 +54,34 @@ export class AdminController {
   @Get('trucks')
   async listTrucks(@Req() req: Request) {
     assertAdmin(req);
+    if (process.env.NODE_ENV !== 'production') {
+      this.logger.log('[TRUCK DEBUG] Fetching trucks');
+      this.logger.log(`[TRUCK DEBUG] Authenticated user id=${req.user!.sub} role=${req.user!.role}`);
+    }
     return this.adminService.listTrucks();
+  }
+
+  @Get('trucks/:id/available-drivers')
+  async getAvailableDrivers(@Req() req: Request, @Param('id') id: string) {
+    assertAdmin(req);
+    return this.adminService.getAvailableDrivers(id);
+  }
+
+  @Post('trucks/:id/assign-driver')
+  async assignDriver(@Req() req: Request, @Param('id') id: string, @Body() body: { driverId: string }) {
+    assertAdmin(req);
+    if (!body?.driverId) throw new BadRequestException('A driver must be selected.');
+    const result = await this.adminService.assignDriver(id, body.driverId);
+    await this.adminService.logActivity(req.user!.sub, 'ASSIGN_TRUCK_DRIVER', 'TRUCK', id, { driverId: body.driverId });
+    return result;
   }
 
   @Post('trucks')
   async createTruck(@Req() req: Request, @Body() body: any) {
     assertAdmin(req);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      throw new BadRequestException('Truck details are required.');
+    }
     const truck = await this.adminService.createTruck(body);
     await this.adminService.logActivity(req.user!.sub, 'CREATE_TRUCK', 'TRUCK', truck.id, { plateNumber: truck.plate_number });
     return truck;
@@ -87,6 +113,7 @@ export class AdminController {
   @Post('users')
   async createUser(@Req() req: Request, @Body() body: { name: string; email: string; password: string; owner_id: string }) {
     assertAdmin(req);
+    if (!body || typeof body !== 'object') throw new BadRequestException('Driver details are required.');
     const user = await this.adminService.createTruckUser(body.name, body.email, body.password, body.owner_id);
     await this.adminService.logActivity(req.user!.sub, 'CREATE_TRUCK_USER', 'USER', user.id, { name: user.name });
     return user;

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useAuth, apiFetch } from '@/lib/auth';
+import { AvailableOwner, getAvailableOwners } from '@/lib/owners';
 import { useRouter } from 'next/navigation';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Spinner, EmptyState, ErrorAlert, SuccessAlert, Modal, formatDate } from '@/components/ui/shared';
@@ -19,7 +20,9 @@ export default function AdminUsers() {
   const { user, loading } = useAuth();
   const router = useRouter();
   const [users, setUsers] = useState<any[]>([]);
-  const [owners, setOwners] = useState<any[]>([]);
+  const [owners, setOwners] = useState<AvailableOwner[]>([]);
+  const [loadingOwners, setLoadingOwners] = useState(false);
+  const [ownerError, setOwnerError] = useState('');
   const [fetching, setFetching] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -34,12 +37,8 @@ export default function AdminUsers() {
   async function fetchAll() {
     setFetching(true);
     try {
-      const [u, o] = await Promise.all([
-        apiFetch('/api/admin/users'),
-        apiFetch('/api/admin/owners'),
-      ]);
+      const u = await apiFetch('/api/admin/users');
       setUsers(u);
-      setOwners(o.filter((o: any) => o.active));
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -48,6 +47,23 @@ export default function AdminUsers() {
   }
 
   useEffect(() => { if (user?.role === 'admin') fetchAll(); }, [user]);
+
+  // Load owner records on each modal open. Keep this separate from the driver
+  // table request so a failure loading drivers cannot leave owner options blank.
+  useEffect(() => {
+    if (!showModal) return;
+    let active = true;
+    setOwners([]);
+    setOwnerError('');
+    setLoadingOwners(true);
+    getAvailableOwners()
+      .then((rows) => { if (active) setOwners(rows); })
+      .catch((e: any) => {
+        if (active) setOwnerError(e?.message || 'Could not load registered owners.');
+      })
+      .finally(() => { if (active) setLoadingOwners(false); });
+    return () => { active = false; };
+  }, [showModal]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -61,7 +77,7 @@ export default function AdminUsers() {
       setSuccess('Driver created successfully.');
       setShowModal(false);
       setForm({ name: '', email: '', password: 'password123', owner_id: '' });
-      fetchAll();
+      await fetchAll();
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -92,7 +108,7 @@ export default function AdminUsers() {
           <p className="text-sm" style={{ color: 'var(--color-slate)' }}>
             {users.length} truck driver{users.length !== 1 ? 's' : ''} registered
           </p>
-          <button className="btn-primary text-sm" onClick={() => setShowModal(true)}>
+          <button className="btn-primary text-sm" onClick={() => { setForm({ name: '', email: '', password: 'password123', owner_id: '' }); setShowModal(true); }}>
             + Add Driver
           </button>
         </div>
@@ -176,16 +192,18 @@ export default function AdminUsers() {
               <select
                 value={form.owner_id}
                 onChange={e => setForm(p => ({ ...p, owner_id: e.target.value }))}
-                required
+                required disabled={loadingOwners || !!ownerError || owners.length === 0}
                 className="input-field"
               >
-                <option value="">Select owner…</option>
-                {owners.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                <option value="">{loadingOwners ? 'Loading owners…' : ownerError ? 'Owners could not be loaded' : owners.length ? 'Select owner…' : 'No registered owners found'}</option>
+                {owners.map(o => <option key={o.id} value={o.id}>{o.name} ({o.email})</option>)}
               </select>
+              {loadingOwners && <p className="text-xs text-slate-400" role="status">Loading registered owners…</p>}
+              {ownerError && <p className="text-xs text-red-600" role="alert">{ownerError}</p>}
             </div>
             {error && <ErrorAlert message={error} />}
             <div className="flex gap-3 pt-2">
-              <button type="submit" className="btn-primary flex-1" disabled={saving}>
+              <button type="submit" className="btn-primary flex-1" disabled={saving || loadingOwners || !!ownerError || owners.length === 0 || !form.owner_id}>
                 {saving ? 'Creating…' : 'Add Driver'}
               </button>
               <button type="button" className="btn-ghost flex-1" onClick={() => setShowModal(false)}>Cancel</button>

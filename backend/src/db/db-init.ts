@@ -50,10 +50,23 @@ async function initDb() {
       insurance_expiry DATE,
       permit_expiry DATE,
       fitness_expiry DATE,
+      iot_connection_number VARCHAR(50),
+      base_insurance_price NUMERIC(8,2) DEFAULT 450.00,
+      current_insurance_price NUMERIC(8,2) DEFAULT 450.00,
+      insurance_risk_score NUMERIC(5,2) DEFAULT 15.0,
+      insurance_status VARCHAR(20) DEFAULT 'discounted',
       active BOOLEAN DEFAULT true,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `;
+
+  // Additive upgrades for databases initialized by older versions of db:init.
+  await sql`ALTER TABLE trucks ADD COLUMN IF NOT EXISTS iot_connection_number VARCHAR(50);`;
+  await sql`ALTER TABLE trucks ADD COLUMN IF NOT EXISTS base_insurance_price NUMERIC(8,2) DEFAULT 450.00;`;
+  await sql`ALTER TABLE trucks ADD COLUMN IF NOT EXISTS current_insurance_price NUMERIC(8,2) DEFAULT 450.00;`;
+  await sql`ALTER TABLE trucks ADD COLUMN IF NOT EXISTS insurance_risk_score NUMERIC(5,2) DEFAULT 15.0;`;
+  await sql`ALTER TABLE trucks ADD COLUMN IF NOT EXISTS insurance_status VARCHAR(20) DEFAULT 'discounted';`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_trucks_iot_connection ON trucks(iot_connection_number);`;
 
   // Trips table
   await sql`
@@ -68,6 +81,27 @@ async function initDb() {
       started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       ended_at TIMESTAMP
     );
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS trip_telemetry_history (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      trip_id UUID REFERENCES trips(id) ON DELETE SET NULL,
+      truck_id UUID NOT NULL REFERENCES trucks(id) ON DELETE CASCADE,
+      device_id VARCHAR(50), connection_number VARCHAR(50),
+      temperature NUMERIC(5,2) NOT NULL, target_temp NUMERIC(5,2) NOT NULL,
+      humidity NUMERIC(5,2) NOT NULL, battery NUMERIC(5,2) NOT NULL,
+      door_open BOOLEAN NOT NULL DEFAULT false,
+      gps_lat NUMERIC(9,6), gps_lng NUMERIC(9,6), speed_kmh NUMERIC(5,2),
+      spoilage_risk NUMERIC(5,2), spoilage_risk_level VARCHAR(20),
+      rsl_hours NUMERIC(6,2), quality_retention_pct NUMERIC(5,2),
+      route_recommendation TEXT,
+      recorded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_telemetry_history_truck_time
+      ON trip_telemetry_history(truck_id, recorded_at DESC);
   `;
 
   // Issues table
@@ -122,16 +156,36 @@ async function initDb() {
       recorded_at TIMESTAMP NOT NULL,
       received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
+  `;
+  await sql`
     CREATE INDEX IF NOT EXISTS idx_truck_loc_history_truck_time ON truck_location_history(truck_id, recorded_at DESC);
   `;
 
+  if (process.env.SEED_DEMO_DATA !== 'true' || process.env.NODE_ENV === 'production') {
+    console.log('Demo seeding disabled. Set SEED_DEMO_DATA=true in a non-production environment to seed a fresh development database.');
+    return;
+  }
   console.log('2. Seeding initial data (Skill S7)...');
 
-  // Check if users already seeded
-  const existingUsers = await sql`SELECT count(*)::int as count FROM users`;
-  if (existingUsers[0].count > 0) {
-    console.log(`Tables already contain ${existingUsers[0].count} users. Cleaning and re-seeding for clean state...`);
-    await sql`TRUNCATE TABLE activity_log, issues, trips, trucks, users RESTART IDENTITY CASCADE;`;
+  // Seed demo data only into a genuinely empty database. Never truncate or
+  // replace existing production/application records during initialization.
+  const existingData = await sql`
+    SELECT
+      (SELECT COUNT(*) FROM users) AS users,
+      (SELECT COUNT(*) FROM trucks) AS trucks,
+      (SELECT COUNT(*) FROM trips) AS trips,
+      (SELECT COUNT(*) FROM issues) AS issues,
+      (SELECT COUNT(*) FROM activity_log) AS activity_logs,
+      (SELECT COUNT(*) FROM truck_locations) AS truck_locations,
+      (SELECT COUNT(*) FROM truck_location_history) AS truck_location_history,
+      (SELECT COUNT(*) FROM trip_telemetry_history) AS trip_telemetry_history
+  `;
+  const populatedTables = Object.entries(existingData[0] || {})
+    .filter(([, count]) => Number(count) > 0)
+    .map(([table]) => table);
+  if (populatedTables.length > 0) {
+    console.log(`Existing records found in ${populatedTables.join(', ')}. Preserving all records; demo seeding skipped.`);
+    return;
   }
 
   const defaultPassword = 'password123';

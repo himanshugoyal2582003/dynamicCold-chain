@@ -157,6 +157,14 @@ export class TrackingGateway
     this.server.to(`owner:${ownerId}`).emit(event, payload);
     this.server.to(`truck:${truckId}`).emit(event, payload);
   }
+
+  broadcastTripUpdate(trip: any, event = 'trip:update'): void {
+    if (!this.server) return;
+    const payload = { trip };
+    this.server.to('admin:fleet').emit(event, payload);
+    if (trip.owner_id) this.server.to(`owner:${trip.owner_id}`).emit(event, payload);
+    if (trip.truck_id) this.server.to(`truck:${trip.truck_id}`).emit(event, payload);
+  }
 }
 
 // ─── Shared payload types ────────────────────────────────────────────────────

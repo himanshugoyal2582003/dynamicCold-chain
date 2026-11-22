@@ -17,6 +17,20 @@ import { IotService, EnrichedIoTTelemetry } from './iot.service';
 export class IotController {
   constructor(private readonly iotService: IotService) {}
 
+  // The simulator calls this server-to-server route whenever its registered
+  // device list changes. The shared secret is never exposed to browser code.
+  @Post('devices/registry-sync')
+  syncRegistry(
+    @Body() body: { devices: Array<{ id: string; connectionNumber: string; name: string; productType?: string; battery?: number; powerOn?: boolean; status?: string }>; removedDeviceIds?: string[] },
+    @Headers('x-iot-ingest-secret') ingestSecret?: string,
+  ) {
+    const expectedSecret = process.env.IOT_INGEST_SECRET;
+    if (!expectedSecret || ingestSecret !== expectedSecret) {
+      throw new UnauthorizedException('Invalid IoT simulator credentials.');
+    }
+    return this.iotService.syncDeviceRegistry(body?.devices, body?.removedDeviceIds || []);
+  }
+
   // 1. Machine-to-machine ingestion from AI/ML service
   @Post('ingest')
   ingest(
@@ -35,11 +49,11 @@ export class IotController {
 
   // 2. List active IoT devices (Requires verified JWT)
   @Get('devices')
-  getActiveDevices(@Req() req: Request) {
+  async getActiveDevices(@Req() req: Request) {
     if (!req.user) throw new UnauthorizedException('Authentication required.');
     return {
       success: true,
-      devices: this.iotService.getActiveDevices(),
+      devices: await this.iotService.getDevices(req.user),
     };
   }
 
@@ -54,13 +68,16 @@ export class IotController {
       throw new BadRequestException('truckId and connectionNumber are required');
     }
 
-    // Verify user owns or is assigned to this truck
+    if (!['admin', 'owner'].includes(req.user.role)) {
+      throw new ForbiddenException('Only administrators and fleet owners can manage device pairings.');
+    }
+    // Verify user owns this truck or is an administrator.
     const hasAccess = await this.iotService.verifyTruckAccess(req.user, body.truckId);
     if (!hasAccess) {
       throw new ForbiddenException('Access denied: You do not have permission to manage this vehicle.');
     }
 
-    return this.iotService.connectDevice(body.truckId, body.connectionNumber);
+    return this.iotService.connectDevice(body.truckId, body.connectionNumber, req.user.sub);
   }
 
   // 4. Disconnect truck from IoT device with strict IDOR ownership check
@@ -70,6 +87,9 @@ export class IotController {
     @Body() body: { truckId: string },
   ) {
     if (!req.user) throw new UnauthorizedException('Authentication required.');
+    if (!['admin', 'owner'].includes(req.user.role)) {
+      throw new ForbiddenException('Only administrators and fleet owners can manage device pairings.');
+    }
     if (!body.truckId) {
       throw new BadRequestException('truckId is required');
     }
@@ -79,7 +99,7 @@ export class IotController {
       throw new ForbiddenException('Access denied: You do not have permission to manage this vehicle.');
     }
 
-    return this.iotService.disconnectDevice(body.truckId);
+    return this.iotService.disconnectDevice(body.truckId, req.user.sub);
   }
 
   // 5. Get latest enriched telemetry with strict IDOR protection

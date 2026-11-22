@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
+import { ApiResponseError } from '@/lib/api-client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ErrorAlert } from '@/components/ui/shared';
@@ -41,7 +42,16 @@ export default function LoginPage() {
     try {
       await login(email, password);
     } catch (err: any) {
-      setError(err.message || 'Login failed. Please try again.');
+      const details = err instanceof ApiResponseError ? `${err.message} ${err.bodyExcerpt || ''}` : String(err?.message || '');
+      if (err instanceof ApiResponseError && err.status === 401 && /deactivat|inactive/i.test(details)) {
+        setError('Your account is inactive. Please contact your administrator.');
+      } else if (err instanceof ApiResponseError && err.status === 401) {
+        setError('Invalid email or password. Please try again.');
+      } else if (err instanceof ApiResponseError && err.status === undefined) {
+        setError('Unable to connect to the server. Please try again.');
+      } else {
+        setError('Something went wrong. Please try again later.');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -127,12 +137,6 @@ export default function LoginPage() {
               }}
             >
               {sessionNotice}
-            </div>
-          )}
-
-          {error && (
-            <div className="mb-4">
-              <ErrorAlert message={error} />
             </div>
           )}
 

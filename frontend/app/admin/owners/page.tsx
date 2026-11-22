@@ -53,10 +53,10 @@ export default function AdminOwners() {
         method: 'POST',
         body: JSON.stringify(form),
       });
+      await fetchOwners();
       setSuccess('Owner created successfully.');
       setShowModal(false);
       setForm({ name: '', email: '', password: 'password123' });
-      fetchOwners();
     } catch (e: any) {
       setError(e.message);
     } finally {

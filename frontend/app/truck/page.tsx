@@ -24,8 +24,6 @@ const NAV = [
   { href: '/truck/issues', label: 'Issues', icon: '⚠️' },
 ];
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-
 // ─── GPS types ────────────────────────────────────────────────────────────────
 type GpsStatus = 'idle' | 'acquiring' | 'active' | 'no_signal' | 'denied';
 
@@ -120,6 +118,7 @@ export default function TruckPanel() {
   const [activeTrip, setActiveTrip] = useState<any>(null);
   const [issuesList, setIssuesList] = useState<any[]>([]);
   const [fetching, setFetching] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -138,10 +137,7 @@ export default function TruckPanel() {
 
   // ── IoT / Telemetry ──
   const [telemetryData, setTelemetryData] = useState<any>(null);
-  const [connInput, setConnInput] = useState('');
-  const [activeIotDevices, setActiveIotDevices] = useState<any[]>([]);
-  const [connectingIot, setConnectingIot] = useState(false);
-  const [showPairModal, setShowPairModal] = useState(false);
+  const [telemetryError, setTelemetryError] = useState('');
   const [telemetryLoading, setTelemetryLoading] = useState(false);
   // Track when door first opened
   const doorOpenSinceRef = useRef<number | null>(null);
@@ -168,6 +164,7 @@ export default function TruckPanel() {
   // Telemetry fetch
   const fetchTelemetry = useCallback(async () => {
     setTelemetryLoading(true);
+    setTelemetryError('');
     try {
       const data = await apiFetch('/api/truck/telemetry');
       setTelemetryData(data);
@@ -177,37 +174,44 @@ export default function TruckPanel() {
       } else {
         doorOpenSinceRef.current = null;
       }
-    } catch {
-      // silent
+    } catch (e: any) {
+      setTelemetryError(e?.message || 'Could not load truck telemetry.');
     } finally {
       setTelemetryLoading(false);
     }
   }, []);
 
-  const fetchAvailableIotDevices = useCallback(async () => {
+  const fetchAll = useCallback(async (showLoading = true) => {
+    if (showLoading) setFetching(true);
+    setLoadError('');
     try {
-      const data = await apiFetch('/api/iot/devices');
-      if (data.devices) setActiveIotDevices(data.devices);
-    } catch { /* ignore */ }
-  }, []);
-
-  const fetchAll = useCallback(async () => {
-    setFetching(true);
-    try {
-      const [t, at, iss] = await Promise.all([
-        apiFetch('/api/truck/my-truck'),
+      const assignment = await apiFetch('/api/truck/my-truck');
+      const t = assignment && typeof assignment === 'object' && 'truck' in assignment
+        ? assignment.truck
+        : assignment;
+      setTruck(t || null);
+      if (!t) {
+        setActiveTrip(null);
+        setIssuesList([]);
+        setTelemetryData(null);
+        return;
+      }
+      const [tripResponse, iss] = await Promise.all([
         apiFetch('/api/truck/active-trip'),
-        apiFetch('/api/truck/issues').catch(() => []),
+        apiFetch('/api/truck/issues'),
       ]);
-      setTruck(t);
-      setActiveTrip(at);
+      if (iss != null && !Array.isArray(iss)) throw new Error('GET /api/truck/issues returned an invalid issue response.');
+      if (!tripResponse || tripResponse.success !== true || (tripResponse.trip !== null && typeof tripResponse.trip !== 'object')) {
+        throw new Error('The active trip service returned an invalid response.');
+      }
+      setActiveTrip(tripResponse.trip);
       setIssuesList(Array.isArray(iss) ? iss : []);
       if (t) setTempInput(String(t.target_temp_c));
       await fetchTelemetry();
     } catch (e: any) {
-      setError(e.message);
+      setLoadError(e?.message || 'Could not load your assigned truck.');
     } finally {
-      setFetching(false);
+      if (showLoading) setFetching(false);
     }
   }, [fetchTelemetry]);
 
@@ -215,10 +219,10 @@ export default function TruckPanel() {
     if (user?.role === 'truckUser') {
       fetchAll();
       // Telemetry: refresh every 30 seconds
-      const timer = setInterval(() => fetchTelemetry(), 30000);
+      const timer = setInterval(() => fetchAll(false), 30000);
       return () => clearInterval(timer);
     }
-  }, [user, fetchAll, fetchTelemetry]);
+  }, [user, fetchAll]);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // ─────────────────────────────────────────────────────────────────────────────
@@ -356,29 +360,6 @@ export default function TruckPanel() {
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Existing handlers (preserved)
-  async function handleConnectIot(codeToConnect?: string) {
-    const code = (codeToConnect || connInput).trim().toUpperCase();
-    if (!code) return;
-    setConnectingIot(true); setError('');
-    try {
-      await apiFetch('/api/truck/connect-iot', { method: 'POST', body: JSON.stringify({ connectionNumber: code }) });
-      setSuccess(`Connected to IoT Sensor [${code}]`);
-      setShowPairModal(false); setConnInput('');
-      await fetchTelemetry(); await fetchAll();
-    } catch (e: any) { setError(e.message); }
-    finally { setConnectingIot(false); }
-  }
-
-  async function handleDisconnectIot() {
-    setConnectingIot(true); setError('');
-    try {
-      await apiFetch('/api/truck/disconnect-iot', { method: 'POST' });
-      setSuccess('IoT Sensor disconnected.');
-      await fetchTelemetry(); await fetchAll();
-    } catch (e: any) { setError(e.message); }
-    finally { setConnectingIot(false); }
-  }
-
   async function handleStartTrip(e: React.FormEvent) {
     e.preventDefault(); setSaving(true); setError('');
     try {
@@ -442,7 +423,12 @@ export default function TruckPanel() {
 
   return (
     <DashboardLayout navItems={NAV} title="Driver Control Panel" roleLabel="Truck User">
-      {fetching ? <Spinner /> : !truck ? (
+      {fetching ? <Spinner /> : loadError ? (
+        <div className="max-w-xl mx-auto py-12 space-y-3">
+          <ErrorAlert message={loadError} />
+          <button className="btn-ghost" onClick={() => fetchAll()}>Retry</button>
+        </div>
+      ) : !truck ? (
         <div className="text-center py-20">
           <div className="text-4xl mb-3">🚛</div>
           <p className="text-sm" style={{ color: 'var(--color-slate)' }}>
@@ -733,28 +719,18 @@ export default function TruckPanel() {
                   <p className="text-xs" style={{ color: 'var(--color-slate)' }}>Refreshes every 30 seconds</p>
                 </div>
               </div>
-              {telemetryData?.isIotConnected ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-mono font-bold px-2 py-0.5 rounded"
-                    style={{ background: '#DDEEE8', color: '#2E7D5B' }}>
-                    {telemetryData.connectionNumber || truck.iot_connection_number}
-                  </span>
-                  <button onClick={handleDisconnectIot} disabled={connectingIot}
-                    className="text-xs" style={{ color: 'var(--status-issue)' }}>
-                    Disconnect
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => { fetchAvailableIotDevices(); setShowPairModal(true); }}
-                  className="btn-primary text-xs px-3 py-1.5"
-                >
-                  + Connect Sensor
-                </button>
-              )}
+              <span className="text-[10px] font-bold px-2 py-1 rounded uppercase"
+                style={{
+                  background: telemetryData?.isIotConnected ? '#DDEEE8' : truck.iot_connection_number ? '#FEF3D6' : '#F7F6F3',
+                  color: telemetryData?.isIotConnected ? '#2E7D5B' : truck.iot_connection_number ? '#8A5800' : '#5B6470',
+                }}>
+                {telemetryData?.isIotConnected ? `ONLINE · ${telemetryData.connectionNumber || truck.iot_connection_number}`
+                  : truck.iot_connection_number ? `OFFLINE · ${truck.iot_connection_number}` : 'NO DEVICE PAIRED'}
+              </span>
             </div>
 
             {telemetryLoading && !telemetryData && <SkeletonCard rows={4} />}
+            {telemetryError && <ErrorAlert message={telemetryError} />}
 
             {telemetryData?.isIotConnected && telemetryData.latest ? (
               <div className="space-y-4">
@@ -857,15 +833,10 @@ export default function TruckPanel() {
                 <div className="text-3xl mb-3">📡</div>
                 <p className="text-sm font-medium mb-1" style={{ color: 'var(--color-ink)' }}>No IoT device connected</p>
                 <p className="text-xs mb-4" style={{ color: 'var(--color-slate)' }}>
-                  Pair with an active sensor in the IoT Simulator (:3001) using its Connection Number.
+                  {truck.iot_connection_number
+                    ? `Device ${truck.iot_connection_number} is paired but currently offline.`
+                    : 'No IoT device is paired. Contact your fleet manager to assign a device.'}
                 </p>
-                <button
-                  onClick={() => { fetchAvailableIotDevices(); setShowPairModal(true); }}
-                  className="btn-ghost text-xs px-4 py-2 border"
-                  style={{ borderColor: 'var(--color-hairline)' }}
-                >
-                  🔌 Pair Connection Number
-                </button>
               </div>
             ) : null}
           </div>
@@ -1021,63 +992,6 @@ export default function TruckPanel() {
               <button type="button" className="btn-ghost flex-1" onClick={() => setShowIssue(false)}>Cancel</button>
             </div>
           </form>
-        </Modal>
-      )}
-
-      {/* Pair IoT Device */}
-      {showPairModal && (
-        <Modal title="Connect IoT Sensor Device" onClose={() => setShowPairModal(false)}>
-          <div className="space-y-4">
-            <p className="text-sm" style={{ color: 'var(--color-slate)' }}>
-              Enter the unique <strong>Connection Number</strong> (e.g.{' '}
-              <code className="bg-slate-100 px-1 py-0.5 rounded font-mono">CONN-4821</code>
-              ) generated by your ESP32 device in the IoT Simulator portal (:3001).
-            </p>
-            <form onSubmit={(e) => { e.preventDefault(); handleConnectIot(); }} className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium uppercase tracking-wide mb-1" style={{ color: 'var(--color-slate)' }}>
-                  Connection Number
-                </label>
-                <input
-                  type="text"
-                  placeholder="CONN-4821"
-                  value={connInput}
-                  onChange={(e) => setConnInput(e.target.value)}
-                  className="input-field uppercase font-mono font-bold text-lg"
-                  required
-                />
-              </div>
-              <button type="submit" disabled={connectingIot || !connInput.trim()} className="btn-primary w-full py-3">
-                {connectingIot ? 'Connecting…' : 'Connect Device'}
-              </button>
-            </form>
-
-            {activeIotDevices.length > 0 && (
-              <div className="pt-3 border-t" style={{ borderColor: 'var(--color-hairline)' }}>
-                <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--color-slate)' }}>
-                  Active Broadcasting Devices (Click to Pair):
-                </p>
-                <div className="space-y-2 max-h-48 overflow-y-auto">
-                  {activeIotDevices.map((dev) => (
-                    <div
-                      key={dev.connection_number || dev.id}
-                      onClick={() => handleConnectIot(dev.connection_number)}
-                      className="p-2.5 rounded border cursor-pointer transition-all flex items-center justify-between text-xs hover:border-emerald-500 hover:bg-emerald-50"
-                      style={{ borderColor: 'var(--color-hairline)' }}
-                    >
-                      <div>
-                        <span className="font-mono font-bold mr-2" style={{ color: '#2E7D5B' }}>{dev.connection_number}</span>
-                        <span style={{ color: 'var(--color-ink)' }}>{dev.device_name}</span>
-                      </div>
-                      <span className="tabular-nums font-semibold" style={{ color: 'var(--color-slate)' }}>
-                        {dev.temperature}°C · {dev.spoilage_risk_level || 'OK'}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
         </Modal>
       )}
     </DashboardLayout>

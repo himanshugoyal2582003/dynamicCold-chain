@@ -1,5 +1,6 @@
 import { Module, MiddlewareConsumer, NestModule, RequestMethod } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import * as path from 'path';
 import { NeonModule } from './neon/neon.module';
 import { AuthModule } from './auth/auth.module';
 import { AdminModule } from './admin/admin.module';
@@ -20,7 +21,11 @@ import { CsrfMiddleware } from './middlewares/csrf.middleware';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: ['.env', '../.env.local'],
+      envFilePath: [
+        path.resolve(__dirname, '../.env'),
+        path.resolve(__dirname, '../../.env'),
+        path.resolve(__dirname, '../../.env.local'),
+      ],
     }),
     NeonModule,
     AuthModule,
@@ -40,6 +45,7 @@ export class AppModule implements NestModule {
         { path: 'api/auth/login', method: RequestMethod.POST },
         { path: 'api/neon/health', method: RequestMethod.GET },
         { path: 'api/iot/ingest', method: RequestMethod.POST },
+        { path: 'api/iot/devices/registry-sync', method: RequestMethod.POST },
       )
       .forRoutes(
         AdminController,

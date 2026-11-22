@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useAuth, apiFetch } from '@/lib/auth';
+import { AvailableOwner, getAvailableOwners } from '@/lib/owners';
 import { useRouter } from 'next/navigation';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { StatusBadge, Spinner, EmptyState, ErrorAlert, SuccessAlert, Modal, formatDate, isExpired, isExpiringSoon } from '@/components/ui/shared';
@@ -25,11 +26,26 @@ export default function AdminTrucks() {
   const { user, loading } = useAuth();
   const router = useRouter();
   const [trucks, setTrucks] = useState<any[]>([]);
-  const [owners, setOwners] = useState<any[]>([]);
+  const [owners, setOwners] = useState<AvailableOwner[]>([]);
+  const [loadingOwners, setLoadingOwners] = useState(false);
+  const [ownerError, setOwnerError] = useState('');
   const [fetching, setFetching] = useState(true);
+  const [trucksError, setTrucksError] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [showModal, setShowModal] = useState(false);
+  const [assignTruck, setAssignTruck] = useState<any>(null);
+  const [assignmentDrivers, setAssignmentDrivers] = useState<any[]>([]);
+  const [selectedDriverId, setSelectedDriverId] = useState('');
+  const [loadingAssignmentDrivers, setLoadingAssignmentDrivers] = useState(false);
+  const [assignmentError, setAssignmentError] = useState('');
+  const [savingAssignment, setSavingAssignment] = useState(false);
+  const [iotTruck, setIotTruck] = useState<any>(null);
+  const [iotDevices, setIotDevices] = useState<any[]>([]);
+  const [iotLoading, setIotLoading] = useState(false);
+  const [iotError, setIotError] = useState('');
+  const [iotSaving, setIotSaving] = useState(false);
+  const [selectedIotDevice, setSelectedIotDevice] = useState('');
   const [form, setForm] = useState(BLANK_FORM);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
@@ -40,15 +56,14 @@ export default function AdminTrucks() {
 
   async function fetchAll() {
     setFetching(true);
+    setTrucksError('');
     try {
-      const [t, o] = await Promise.all([
-        apiFetch('/api/admin/trucks'),
-        apiFetch('/api/admin/owners'),
-      ]);
-      setTrucks(t);
-      setOwners(o.filter((o: any) => o.active));
+      const response = await apiFetch('/api/admin/trucks');
+      const rows = Array.isArray(response) ? response : response?.trucks;
+      if (!Array.isArray(rows)) throw new Error('Truck service returned an invalid response.');
+      setTrucks(rows);
     } catch (e: any) {
-      setError(e.message);
+      setTrucksError(e?.message || 'Could not load trucks.');
     } finally {
       setFetching(false);
     }
@@ -56,8 +71,109 @@ export default function AdminTrucks() {
 
   useEffect(() => { if (user?.role === 'admin') fetchAll(); }, [user]);
 
+  useEffect(() => {
+    if (!showModal) return;
+    let active = true;
+    setOwners([]);
+    setOwnerError('');
+    setLoadingOwners(true);
+    setForm((current) => ({ ...current, owner_id: '' }));
+    getAvailableOwners()
+      .then((rows) => { if (active) setOwners(rows); })
+      .catch((e: any) => { if (active) setOwnerError(e?.message || 'Could not load registered owners.'); })
+      .finally(() => { if (active) setLoadingOwners(false); });
+    return () => { active = false; };
+  }, [showModal]);
+
+  useEffect(() => {
+    if (!assignTruck) return;
+    let active = true;
+    setAssignmentDrivers([]);
+    setSelectedDriverId('');
+    setAssignmentError('');
+    setLoadingAssignmentDrivers(true);
+    apiFetch(`/api/admin/trucks/${assignTruck.id}/available-drivers`)
+      .then((rows) => {
+        if (!active) return;
+        if (!Array.isArray(rows)) throw new Error('The driver service returned an invalid response.');
+        setAssignmentDrivers(rows);
+      })
+      .catch((e: any) => { if (active) setAssignmentError(e?.message || 'Could not load eligible drivers.'); })
+      .finally(() => { if (active) setLoadingAssignmentDrivers(false); });
+    return () => { active = false; };
+  }, [assignTruck]);
+
+  useEffect(() => {
+    if (!iotTruck) return;
+    let active = true;
+    setIotLoading(true);
+    setIotError('');
+    setIotDevices([]);
+    setSelectedIotDevice('');
+    apiFetch('/api/iot/devices')
+      .then((response) => {
+        if (!Array.isArray(response?.devices)) throw new Error('The device registry returned an invalid response.');
+        if (active) setIotDevices(response.devices);
+      })
+      .catch((e: any) => { if (active) setIotError(e?.message || 'Could not load registered IoT devices.'); })
+      .finally(() => { if (active) setIotLoading(false); });
+    return () => { active = false; };
+  }, [iotTruck]);
+
+  async function saveIotPairing(action: 'pair' | 'unpair') {
+    if (!iotTruck || iotSaving) return;
+    setIotSaving(true);
+    setIotError('');
+    try {
+      if (action === 'pair') {
+        if (!iotDevices.some((device) => device.connection_number === selectedIotDevice && !device.isPaired)) {
+          throw new Error('Select an available registered device.');
+        }
+        await apiFetch('/api/iot/connect', {
+          method: 'POST',
+          body: JSON.stringify({ truckId: iotTruck.id, connectionNumber: selectedIotDevice }),
+        });
+        setSuccess(`IoT device ${selectedIotDevice} paired with ${iotTruck.plate_number}.`);
+      } else {
+        await apiFetch('/api/iot/disconnect', { method: 'POST', body: JSON.stringify({ truckId: iotTruck.id }) });
+        setSuccess(`IoT device unpaired from ${iotTruck.plate_number}.`);
+      }
+      await fetchAll();
+      setIotTruck(null);
+    } catch (e: any) {
+      setIotError(e?.message || 'IoT pairing update failed.');
+    } finally {
+      setIotSaving(false);
+    }
+  }
+
+  async function handleAssignDriver(e: React.FormEvent) {
+    e.preventDefault();
+    if (!assignTruck || !selectedDriverId || savingAssignment) return;
+    setSavingAssignment(true);
+    setAssignmentError('');
+    setError('');
+    try {
+      await apiFetch(`/api/admin/trucks/${assignTruck.id}/assign-driver`, {
+        method: 'POST', body: JSON.stringify({ driverId: selectedDriverId }),
+      });
+      setSuccess(`Driver assigned to ${assignTruck.plate_number}.`);
+      setAssignTruck(null);
+      setSelectedDriverId('');
+      await fetchAll();
+    } catch (e: any) {
+      setAssignmentError(e?.message || 'Driver assignment failed.');
+    } finally {
+      setSavingAssignment(false);
+    }
+  }
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
+    if (!owners.some((owner) => owner.id === form.owner_id && owner.active)) {
+      setError('Select an active registered owner before creating the truck.');
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -72,7 +188,7 @@ export default function AdminTrucks() {
       setSuccess('Truck created successfully.');
       setShowModal(false);
       setForm(BLANK_FORM);
-      fetchAll();
+      await fetchAll();
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -127,6 +243,11 @@ export default function AdminTrucks() {
         <div className="card p-0 overflow-x-auto">
           {fetching ? (
             <Spinner />
+          ) : trucksError ? (
+            <div className="p-6 space-y-3">
+              <ErrorAlert message={`Truck list could not be loaded: ${trucksError}`} />
+              <button className="btn-ghost" onClick={fetchAll}>Retry</button>
+            </div>
           ) : filtered.length === 0 ? (
             <EmptyState message="No trucks found." icon="🚛" />
           ) : (
@@ -136,6 +257,7 @@ export default function AdminTrucks() {
                   <th>Plate</th>
                   <th>Type</th>
                   <th>Owner</th>
+                  <th>Assigned Driver</th>
                   <th>Status</th>
                   <th>Temp °C</th>
                   <th>Insurance</th>
@@ -150,12 +272,25 @@ export default function AdminTrucks() {
                     <td className="font-mono font-semibold text-sm">{t.plate_number}</td>
                     <td style={{ color: 'var(--color-slate)', fontSize: 13 }}>{t.type}</td>
                     <td style={{ color: 'var(--color-slate)', fontSize: 13 }}>{t.owner_name}</td>
+                    <td style={{ color: 'var(--color-slate)', fontSize: 13 }}>
+                      {t.driver_name ? <>{t.driver_name}<span className="block text-[11px] text-slate-500">{t.driver_email}</span></> : 'Unassigned'}
+                    </td>
                     <td><StatusBadge status={t.status} /></td>
                     <td className="tabular-nums" style={{ color: 'var(--color-ink)' }}>{t.target_temp_c}°C</td>
                     <td><DocTag date={t.insurance_expiry} /></td>
                     <td><DocTag date={t.permit_expiry} /></td>
                     <td><DocTag date={t.fitness_expiry} /></td>
                     <td>
+                      {t.active && (
+                        <button className="btn-ghost mr-2" onClick={() => setAssignTruck(t)}>
+                          {t.driver_name ? 'Reassign Driver' : 'Assign Driver'}
+                        </button>
+                      )}
+                      {t.active && (
+                        <button className="btn-ghost mr-2" onClick={() => setIotTruck(t)}>
+                          IoT Device
+                        </button>
+                      )}
                       {t.active && (
                         <button className="btn-danger" onClick={() => handleDeactivate(t.id, t.plate_number)}>
                           Deactivate
@@ -180,12 +315,14 @@ export default function AdminTrucks() {
               <select
                 value={form.owner_id}
                 onChange={e => setForm(p => ({ ...p, owner_id: e.target.value }))}
-                required
+                required disabled={loadingOwners || !!ownerError || owners.length === 0}
                 className="input-field"
               >
-                <option value="">Select owner…</option>
-                {owners.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                <option value="">{loadingOwners ? 'Loading owners…' : ownerError ? 'Owners could not be loaded' : owners.length ? 'Select owner…' : 'No registered owners found'}</option>
+                {owners.map(o => <option key={o.id} value={o.id}>{o.name} ({o.email})</option>)}
               </select>
+              {loadingOwners && <p className="text-xs text-slate-400" role="status">Loading registered owners…</p>}
+              {ownerError && <p className="text-xs text-red-600" role="alert">{ownerError}</p>}
             </div>
             {[
               { label: 'Plate Number', key: 'plate_number', placeholder: 'DL-01-AX-4821' },
@@ -211,12 +348,82 @@ export default function AdminTrucks() {
             ))}
             {error && <ErrorAlert message={error} />}
             <div className="flex gap-3 pt-2">
-              <button type="submit" className="btn-primary flex-1" disabled={saving}>
+              <button type="submit" className="btn-primary flex-1" disabled={saving || loadingOwners || !!ownerError || owners.length === 0 || !form.owner_id}>
                 {saving ? 'Creating…' : 'Add Truck'}
               </button>
               <button type="button" className="btn-ghost flex-1" onClick={() => setShowModal(false)}>Cancel</button>
             </div>
           </form>
+        </Modal>
+      )}
+
+      {assignTruck && (
+        <Modal title={`Assign Driver · ${assignTruck.plate_number}`} onClose={() => setAssignTruck(null)}>
+          <form onSubmit={handleAssignDriver} className="space-y-4">
+            <label className="block text-xs font-medium uppercase tracking-wide text-slate-400">
+              Eligible drivers · {assignTruck.owner_name}
+            </label>
+            <select
+              className="input-field w-full"
+              value={selectedDriverId}
+              onChange={(event) => setSelectedDriverId(event.target.value)}
+              disabled={loadingAssignmentDrivers || !!assignmentError || assignmentDrivers.length === 0}
+              required
+            >
+              <option value="">{loadingAssignmentDrivers ? 'Loading drivers…' : assignmentError ? 'Drivers could not be loaded' : assignmentDrivers.length ? 'Select a driver…' : 'No available drivers'}</option>
+              {assignmentDrivers.map((driver) => (
+                <option key={driver.id} value={driver.id}>
+                  {driver.name} ({driver.email}){driver.truck_id && driver.truck_id !== assignTruck.id ? ` — transfer from ${driver.truck_plate || 'another truck'}` : driver.truck_id ? ' — currently assigned here' : ' — unassigned'}
+                </option>
+              ))}
+            </select>
+            {loadingAssignmentDrivers && <p className="text-xs text-slate-400" role="status">Loading eligible drivers…</p>}
+            {assignmentError && <ErrorAlert message={assignmentError} />}
+            <div className="flex justify-end gap-3 pt-2">
+              <button type="button" className="btn-ghost" onClick={() => setAssignTruck(null)}>Cancel</button>
+              <button type="submit" className="btn-gold" disabled={savingAssignment || loadingAssignmentDrivers || !!assignmentError || !selectedDriverId}>
+                {savingAssignment ? 'Assigning…' : 'Confirm Assignment'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {iotTruck && (
+        <Modal title={`IoT Device · ${iotTruck.plate_number}`} onClose={() => setIotTruck(null)}>
+          <div className="space-y-4">
+            <p className="text-xs text-slate-500">Pairing is saved in PostgreSQL. Online state is based on recent device telemetry and is independent from pairing.</p>
+            {iotError && <ErrorAlert message={iotError} />}
+            {iotTruck.iot_connection_number ? (
+              <div className="flex items-center justify-between rounded border p-3" style={{ borderColor: 'var(--color-hairline)' }}>
+                <div>
+                  <p className="text-xs uppercase text-slate-500">Currently paired</p>
+                  <p className="font-mono font-semibold">{iotTruck.iot_connection_number}</p>
+                  <p className="text-xs text-slate-500">{iotDevices.find((device) => device.connection_number === iotTruck.iot_connection_number)?.status || 'OFFLINE'}</p>
+                </div>
+                <button type="button" className="btn-danger" disabled={iotSaving} onClick={() => saveIotPairing('unpair')}>
+                  {iotSaving ? 'Saving…' : 'Unpair'}
+                </button>
+              </div>
+            ) : (
+              <>
+                <label className="block text-xs font-medium uppercase tracking-wide text-slate-500">Registered devices</label>
+                <select className="input-field w-full" value={selectedIotDevice} onChange={(e) => setSelectedIotDevice(e.target.value)} disabled={iotLoading || !!iotError}>
+                  <option value="">{iotLoading ? 'Loading devices…' : iotError ? 'Devices unavailable' : iotDevices.filter((d) => !d.isPaired).length ? 'Select an available device…' : 'No available devices'}</option>
+                  {iotDevices.filter((device) => !device.isPaired).map((device) => (
+                    <option key={device.device_id} value={device.connection_number}>
+                      {device.name} ({device.connection_number}) · {device.status}
+                    </option>
+                  ))}
+                </select>
+                {!iotLoading && !iotError && iotDevices.length === 0 && <p className="text-xs text-slate-500">Open the IoT Simulator and load its device registry before pairing.</p>}
+                <button type="button" className="btn-primary w-full" disabled={iotSaving || iotLoading || !selectedIotDevice} onClick={() => saveIotPairing('pair')}>
+                  {iotSaving ? 'Saving pairing…' : 'Pair Device'}
+                </button>
+              </>
+            )}
+            <button type="button" className="btn-ghost w-full" onClick={() => setIotTruck(null)}>Close</button>
+          </div>
         </Modal>
       )}
     </DashboardLayout>

@@ -37,8 +37,14 @@ export class AuthService {
     if (!sql) throw new Error('Database not available');
 
     const rows = await sql(
-      `SELECT id, name, email, password_hash, role, truck_id, owner_id, active
-       FROM users WHERE email = $1 LIMIT 1`,
+      `SELECT u.id, u.name, u.email, u.password_hash, u.role, u.owner_id, u.active,
+              assigned_truck.id AS valid_truck_id
+       FROM users u
+       LEFT JOIN trucks assigned_truck
+         ON assigned_truck.id = u.truck_id
+        AND assigned_truck.owner_id = u.owner_id
+        AND assigned_truck.active = true
+       WHERE u.email = $1 LIMIT 1`,
       [email.toLowerCase().trim()],
     );
 
@@ -62,7 +68,7 @@ export class AuthService {
       email: user.email,
       role: user.role,
       name: user.name,
-      truckId: user.truck_id || null,
+      truckId: user.valid_truck_id || null,
       ownerId: user.owner_id || null,
     };
 
@@ -76,7 +82,14 @@ export class AuthService {
     if (!sql) return null;
 
     const rows = await sql(
-      `SELECT id, name, email, role, truck_id, owner_id FROM users WHERE id = $1 AND active = true LIMIT 1`,
+      `SELECT u.id, u.name, u.email, u.role, u.owner_id,
+              assigned_truck.id AS valid_truck_id
+       FROM users u
+       LEFT JOIN trucks assigned_truck
+         ON assigned_truck.id = u.truck_id
+        AND assigned_truck.owner_id = u.owner_id
+        AND assigned_truck.active = true
+       WHERE u.id = $1 AND u.active = true LIMIT 1`,
       [userId],
     );
 
@@ -88,7 +101,7 @@ export class AuthService {
       email: u.email,
       role: u.role,
       name: u.name,
-      truckId: u.truck_id || null,
+      truckId: u.valid_truck_id || null,
       ownerId: u.owner_id || null,
     };
   }

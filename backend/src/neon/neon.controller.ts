@@ -1,5 +1,5 @@
-import { Controller, Get, ForbiddenException, Req } from '@nestjs/common';
-import { Request } from 'express';
+import { Controller, Get, ForbiddenException, Req, Res } from '@nestjs/common';
+import { Request, Response } from 'express';
 import { NeonService } from './neon.service';
 
 @Controller('api/neon')
@@ -7,11 +7,14 @@ export class NeonController {
   constructor(private readonly neonService: NeonService) {}
 
   @Get('health')
-  getHealth() {
+  async getHealth(@Res({ passthrough: true }) response: Response) {
+    const database = await this.neonService.getDatabaseHealth();
+    if (!database.querySucceeded) response.status(503);
     return {
-      status: 'ok',
+      status: database.querySucceeded ? database.status : 'degraded',
       service: 'coldchain-backend',
       timestamp: new Date().toISOString(),
+      database,
     };
   }
 

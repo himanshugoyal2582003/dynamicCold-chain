@@ -56,24 +56,28 @@ export default function AdminGlobalTrackingPage() {
   }, [user, loading, router]);
 
   // 2. Fetch fleet & owners
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (showLoading = false) => {
+    if (showLoading) setFetching(true);
+    setError('');
     try {
       const [fleetData, ownersData] = await Promise.all([
         apiFetch('/api/tracking/live'),
-        apiFetch('/api/admin/owners').catch(() => []),
+        apiFetch('/api/admin/owners'),
       ]);
-      if (Array.isArray(fleetData)) setTrucks(fleetData);
-      if (Array.isArray(ownersData)) setOwners(ownersData);
+      if (!Array.isArray(fleetData)) throw new Error('GET /api/tracking/live returned an invalid fleet response.');
+      if (!Array.isArray(ownersData)) throw new Error('GET /api/admin/owners returned an invalid owner response.');
+      setTrucks(fleetData);
+      setOwners(ownersData);
     } catch (e: any) {
       setError(e.message || 'Failed to fetch global fleet.');
     } finally {
-      setFetching(false);
+      if (showLoading) setFetching(false);
     }
   }, []);
 
   useEffect(() => {
     if (user?.role === 'admin') {
-      fetchData();
+      fetchData(true);
       const interval = setInterval(fetchData, 15000);
       return () => clearInterval(interval);
     }
@@ -91,6 +95,10 @@ export default function AdminGlobalTrackingPage() {
     socketRef.current = socket;
 
     socket.on('location:update', (payload: any) => {
+      const latitude = Number(payload.latitude);
+      const longitude = Number(payload.longitude);
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)
+        || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return;
       setTrucks((prev) =>
         prev.map((t) => {
           if (t.truck_id === payload.truckId) {
@@ -98,12 +106,15 @@ export default function AdminGlobalTrackingPage() {
               ...t,
               status: payload.status || t.status,
               location: {
-                latitude: payload.latitude,
-                longitude: payload.longitude,
+                latitude,
+                longitude,
                 speed_kmh: payload.speed_kmh,
                 heading: payload.heading,
+                recorded_at: payload.recorded_at || new Date().toISOString(),
+                received_at: new Date().toISOString(),
               },
               gps_status: 'live',
+              last_seen: new Date().toISOString(),
             };
           }
           return t;
@@ -151,6 +162,12 @@ export default function AdminGlobalTrackingPage() {
 
   const selectedTruck = trucks.find((t) => t.truck_id === selectedTruckId) || null;
   const routeData = useShipmentRoute(selectedTruck);
+  const unlocatedTrucks = filteredTrucks.filter((truck) => {
+    const location = truck.location;
+    return !location || !Number.isFinite(location.latitude) || !Number.isFinite(location.longitude)
+      || location.latitude < -90 || location.latitude > 90
+      || location.longitude < -180 || location.longitude > 180;
+  });
 
   if (loading || !user) return null;
 
@@ -158,9 +175,10 @@ export default function AdminGlobalTrackingPage() {
     <DashboardLayout navItems={NAV} title="Global Fleet Intelligence & GIS Tracking" roleLabel="Administrator">
       <div className="space-y-4">
         {error && <ErrorAlert message={error} />}
+        {error && <button className="btn-ghost" onClick={() => fetchData(true)} disabled={fetching}>Retry</button>}
 
         {/* Global Intelligence Metrics */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
           <div className="p-3.5 rounded border" style={{ background: 'var(--color-paper)', borderColor: 'var(--color-hairline)' }}>
             <span className="text-xs uppercase text-slate-500 font-medium">Total Monitored Fleet</span>
             <p className="text-2xl font-bold tabular-nums" style={{ color: 'var(--color-ink)' }}>{trucks.length}</p>
@@ -168,7 +186,7 @@ export default function AdminGlobalTrackingPage() {
           <div className="p-3.5 rounded border" style={{ background: 'var(--color-paper)', borderColor: 'var(--color-hairline)' }}>
             <span className="text-xs uppercase text-slate-500 font-medium">Active En-Route</span>
             <p className="text-2xl font-bold tabular-nums" style={{ color: '#2F5D8A' }}>
-              {trucks.filter((t) => t.status === 'on_trip').length}
+              {trucks.filter((t) => Boolean(t.active_trip)).length}
             </p>
           </div>
           <div className="p-3.5 rounded border" style={{ background: 'var(--color-paper)', borderColor: 'var(--color-hairline)' }}>
@@ -178,12 +196,53 @@ export default function AdminGlobalTrackingPage() {
             </p>
           </div>
           <div className="p-3.5 rounded border" style={{ background: 'var(--color-paper)', borderColor: 'var(--color-hairline)' }}>
-            <span className="text-xs uppercase text-slate-500 font-medium">Registered Owners</span>
+            <span className="text-xs uppercase text-slate-500 font-medium">Available Standby</span>
             <p className="text-2xl font-bold tabular-nums" style={{ color: 'var(--color-gold)' }}>
-              {owners.length || 2}
+              {trucks.filter((t) => t.status === 'available' && !t.active_trip).length}
+            </p>
+          </div>
+          <div className="p-3.5 rounded border" style={{ background: 'var(--color-paper)', borderColor: 'var(--color-hairline)' }}>
+            <span className="text-xs uppercase text-slate-500 font-medium">IoT Paired</span>
+            <p className="text-2xl font-bold tabular-nums" style={{ color: 'var(--color-ink)' }}>
+              {trucks.filter((t) => Boolean(t.iot_connection_number)).length}
+            </p>
+          </div>
+          <div className="p-3.5 rounded border" style={{ background: 'var(--color-paper)', borderColor: 'var(--color-hairline)' }}>
+            <span className="text-xs uppercase text-slate-500 font-medium">IoT Unpaired</span>
+            <p className="text-2xl font-bold tabular-nums" style={{ color: '#9A3412' }}>
+              {trucks.filter((t) => !t.iot_connection_number).length}
             </p>
           </div>
         </div>
+
+        {unlocatedTrucks.length > 0 && (
+          <section className="card p-4" aria-label="Unlocated trucks">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h2 className="text-sm font-semibold">Unlocated Trucks</h2>
+                <p className="text-xs text-slate-500">No valid GPS location is available. These trucks are included in the fleet list but are not placed on the map.</p>
+              </div>
+              <span className="text-xs font-semibold tabular-nums">{unlocatedTrucks.length}</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
+              {unlocatedTrucks.map((truck) => (
+                <button
+                  key={truck.truck_id}
+                  type="button"
+                  onClick={() => setSelectedTruckId(truck.truck_id)}
+                  className="flex items-center justify-between gap-3 rounded border p-3 text-left hover:bg-neutral-50"
+                  style={{ borderColor: 'var(--color-hairline)' }}
+                >
+                  <span>
+                    <span className="block font-mono text-sm font-semibold">{truck.plate_number}</span>
+                    <span className="block text-xs text-slate-500">{truck.status} · {truck.iot_connection_number ? `IoT ${truck.iot_connection_number}` : 'NO DEVICE PAIRED'}</span>
+                  </span>
+                  <span className="text-[10px] uppercase text-slate-500">GPS unavailable</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* Workspace */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4" style={{ minHeight: '640px' }}>

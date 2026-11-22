@@ -18,7 +18,24 @@ CREATE TABLE IF NOT EXISTS trucks (
   current_insurance_price NUMERIC(8,2) NOT NULL DEFAULT 450, insurance_risk_score NUMERIC(5,2) NOT NULL DEFAULT 15,
   insurance_status VARCHAR(20) NOT NULL DEFAULT 'discounted', created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-ALTER TABLE users ADD CONSTRAINT users_truck_id_fk FOREIGN KEY (truck_id) REFERENCES trucks(id) ON DELETE SET NULL;
+-- Keep this initial migration safe for databases that were initialized by an
+-- earlier CREATE TABLE IF NOT EXISTS script. These additions preserve rows.
+ALTER TABLE trucks ADD COLUMN IF NOT EXISTS iot_connection_number VARCHAR(50);
+ALTER TABLE trucks ADD COLUMN IF NOT EXISTS base_insurance_price NUMERIC(8,2) NOT NULL DEFAULT 450;
+ALTER TABLE trucks ADD COLUMN IF NOT EXISTS current_insurance_price NUMERIC(8,2) NOT NULL DEFAULT 450;
+ALTER TABLE trucks ADD COLUMN IF NOT EXISTS insurance_risk_score NUMERIC(5,2) NOT NULL DEFAULT 15;
+ALTER TABLE trucks ADD COLUMN IF NOT EXISTS insurance_status VARCHAR(20) NOT NULL DEFAULT 'discounted';
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'users_truck_id_fk' AND conrelid = 'users'::regclass
+  ) THEN
+    ALTER TABLE users ADD CONSTRAINT users_truck_id_fk
+      FOREIGN KEY (truck_id) REFERENCES trucks(id) ON DELETE SET NULL NOT VALID;
+  END IF;
+END
+$$;
 CREATE TABLE IF NOT EXISTS trips (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(), truck_id UUID NOT NULL REFERENCES trucks(id) ON DELETE CASCADE,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT, origin VARCHAR(255) NOT NULL,
