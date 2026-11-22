@@ -12,7 +12,9 @@ import { OwnerController } from './owner/owner.controller';
 import { TruckController } from './truck/truck.controller';
 import { IotController } from './iot/iot.controller';
 import { TrackingController } from './tracking/tracking.controller';
+import { NeonController } from './neon/neon.controller';
 import { AuthGuardMiddleware } from './middlewares/auth.middleware';
+import { CsrfMiddleware } from './middlewares/csrf.middleware';
 
 @Module({
   imports: [
@@ -33,10 +35,9 @@ export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     // Apply auth guard to all protected routes
     consumer
-      .apply(AuthGuardMiddleware)
+      .apply(AuthGuardMiddleware, CsrfMiddleware)
       .exclude(
         { path: 'api/auth/login', method: RequestMethod.POST },
-        { path: 'api/auth/register', method: RequestMethod.POST },
         { path: 'api/neon/health', method: RequestMethod.GET },
         { path: 'api/iot/ingest', method: RequestMethod.POST },
       )
@@ -46,6 +47,7 @@ export class AppModule implements NestModule {
         TruckController,
         IotController,
         TrackingController,
+        NeonController,
         { path: 'api/auth/me', method: RequestMethod.GET },
         { path: 'api/auth/logout', method: RequestMethod.POST },
       );

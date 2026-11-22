@@ -24,22 +24,8 @@ declare global {
 }
 
 export function extractJwtToken(req: Request): string | null {
-  // 1. Check Authorization header (Bearer <token>)
-  const authHeader = req.headers.authorization || (req.headers as any)?.Authorization;
-  if (authHeader && typeof authHeader === 'string') {
-    if (authHeader.startsWith('Bearer ')) {
-      return authHeader.substring(7).trim();
-    }
-    return authHeader.trim();
-  }
-
-  // 2. Check custom x-auth-token / x-access-token header
-  const customHeader = req.headers['x-auth-token'] || req.headers['x-access-token'];
-  if (customHeader && typeof customHeader === 'string') {
-    return customHeader.trim();
-  }
-
-  // 3. Check httpOnly cookie
+  // Authentication is intentionally cookie-only. Do not reintroduce bearer-token
+  // fallbacks here: browser-readable tokens defeat the httpOnly session boundary.
   if (req.cookies?.coldchain_token) {
     return req.cookies.coldchain_token;
   }

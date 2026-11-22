@@ -48,6 +48,9 @@ export class NeonService implements OnModuleInit {
         this.logger.log('Local/Remote Postgres driver connected via pg.Pool.');
       }
     } else {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('DATABASE_URL must be configured in production.');
+      }
       this.logger.log('DATABASE_URL not configured. Initializing embedded Postgres with demo seed data...');
       this.sql = await createInMemoryPostgres();
       this.logger.log('Embedded in-memory Postgres initialized and seeded with demo accounts.');

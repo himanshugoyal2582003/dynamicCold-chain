@@ -21,7 +21,11 @@ export class AuthService {
   constructor(private readonly neonService: NeonService) {}
 
   private getJwtSecret(): string {
-    return process.env.JWT_SECRET || 'coldchain_fallback_secret';
+    const secret = process.env.JWT_SECRET;
+    if (!secret || secret.length < 32 || secret.includes('your_jwt_secret')) {
+      throw new Error('JWT_SECRET must be configured with at least 32 random characters.');
+    }
+    return secret;
   }
 
   async login(email: string, password: string) {
@@ -64,52 +68,6 @@ export class AuthService {
 
     const token = jwt.sign(payload, this.getJwtSecret(), { expiresIn: '8h' });
 
-    return { token, user: payload };
-  }
-
-  async register(name: string, email: string, password: string, role: string) {
-    if (!name || !email || !password || !role) {
-      throw new BadRequestException('All fields (name, email, password, role) are required.');
-    }
-
-    const normalizedRole = role.trim();
-    if (normalizedRole !== 'admin' && normalizedRole !== 'owner') {
-      throw new BadRequestException(
-        'Public registration is only permitted for Admin and Truck Owner accounts. Driver accounts must be created by fleet managers.',
-      );
-    }
-
-    if (password.length < 6) {
-      throw new BadRequestException('Password must be at least 6 characters.');
-    }
-
-    const sql = this.neonService.getSql();
-    if (!sql) throw new Error('Database not available');
-
-    const cleanEmail = email.toLowerCase().trim();
-    const existing = await sql`SELECT id FROM users WHERE email = ${cleanEmail} LIMIT 1;`;
-    if (existing && existing.length > 0) {
-      throw new BadRequestException('An account with this email address already exists.');
-    }
-
-    const passwordHash = await bcrypt.hash(password, 10);
-    const rows = await sql`
-      INSERT INTO users (name, email, password_hash, role, active)
-      VALUES (${name.trim()}, ${cleanEmail}, ${passwordHash}, ${normalizedRole}, true)
-      RETURNING id, name, email, role, truck_id, owner_id;
-    `;
-
-    const user = rows[0];
-    const payload: JwtPayload = {
-      sub: user.id,
-      email: user.email,
-      role: user.role,
-      name: user.name,
-      truckId: null,
-      ownerId: null,
-    };
-
-    const token = jwt.sign(payload, this.getJwtSecret(), { expiresIn: '8h' });
     return { token, user: payload };
   }
 

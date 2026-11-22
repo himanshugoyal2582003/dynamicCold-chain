@@ -9,10 +9,22 @@ import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { AuthService, JwtPayload } from '../auth/auth.service';
 
+function allowedOrigins(): string[] {
+  return (process.env.CORS_ORIGIN || 'http://localhost:3000,http://localhost:3001')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
+
+function validateOrigin(origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) {
+  if (!origin || allowedOrigins().includes(origin)) return callback(null, true);
+  return callback(new Error('Origin not allowed by CORS'));
+}
+
 @WebSocketGateway({
   namespace: '/tracking',
   cors: {
-    origin: '*',
+    origin: validateOrigin,
     credentials: true,
   },
 })
@@ -31,36 +43,20 @@ export class TrackingGateway
   }
 
   /**
-   * Extract JWT token from socket handshake.
-   * Checks handshake.auth.token, then query param ?token=...
+   * Extract the httpOnly session cookie from the Socket.IO handshake.
    */
   private extractToken(client: Socket): string | null {
-    // 1. handshake.auth.token (recommended)
-    const authToken = (client.handshake as any).auth?.token;
-    if (authToken && typeof authToken === 'string') {
-      return authToken.startsWith('Bearer ')
-        ? authToken.substring(7).trim()
-        : authToken.trim();
-    }
-
-    // 2. Query param ?token=...
-    const queryToken = client.handshake.query?.token;
-    if (queryToken && typeof queryToken === 'string') {
-      return queryToken.trim();
-    }
-
-    // 3. Authorization header (some clients send this)
-    const authHeader = (client.handshake.headers as any)?.authorization;
-    if (authHeader && typeof authHeader === 'string') {
-      return authHeader.startsWith('Bearer ')
-        ? authHeader.substring(7).trim()
-        : authHeader.trim();
-    }
-
-    return null;
+    const cookieHeader = client.handshake.headers.cookie || '';
+    const match = cookieHeader.match(/(?:^|;\s*)coldchain_token=([^;]+)/);
+    return match ? decodeURIComponent(match[1]) : null;
   }
 
   async handleConnection(client: Socket) {
+    const origin = client.handshake.headers.origin;
+    if (origin && !allowedOrigins().includes(origin)) {
+      client.disconnect(true);
+      return;
+    }
     const token = this.extractToken(client);
 
     if (!token) {

@@ -5,6 +5,7 @@ import {
   Body,
   Param,
   Req,
+  Headers,
   BadRequestException,
   UnauthorizedException,
   ForbiddenException,
@@ -18,7 +19,14 @@ export class IotController {
 
   // 1. Machine-to-machine ingestion from AI/ML service
   @Post('ingest')
-  ingest(@Body() body: EnrichedIoTTelemetry) {
+  ingest(
+    @Body() body: EnrichedIoTTelemetry,
+    @Headers('x-iot-ingest-secret') ingestSecret?: string,
+  ) {
+    const expectedSecret = process.env.IOT_INGEST_SECRET;
+    if (!expectedSecret || ingestSecret !== expectedSecret) {
+      throw new UnauthorizedException('Invalid telemetry service credentials.');
+    }
     if (!body || !body.connection_number) {
       throw new BadRequestException('Invalid telemetry payload: connection_number required');
     }

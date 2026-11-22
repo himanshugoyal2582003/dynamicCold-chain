@@ -82,11 +82,15 @@ export class AdminService {
     status: string; target_temp_c: number; insurance_expiry: string;
     permit_expiry: string; fitness_expiry: string;
   }>) {
-    const fields = Object.entries(data)
-      .filter(([, v]) => v !== undefined)
-      .map(([k], i) => `${k} = $${i + 2}`)
-      .join(', ');
-    const values = Object.values(data).filter(v => v !== undefined);
+    const allowedFields = [
+      'plate_number', 'type', 'capacity_tons', 'status', 'target_temp_c',
+      'insurance_expiry', 'permit_expiry', 'fitness_expiry',
+    ] as const;
+    const entries = allowedFields
+      .filter((field) => data[field] !== undefined)
+      .map((field) => [field, data[field]] as const);
+    const fields = entries.map(([field], index) => `${field} = $${index + 2}`).join(', ');
+    const values = entries.map(([, value]) => value);
     if (!fields) return null;
     const rows = await this.sql(`UPDATE trucks SET ${fields} WHERE id = $1 RETURNING *`, [id, ...values]);
     return rows[0];

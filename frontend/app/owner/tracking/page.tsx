@@ -10,8 +10,7 @@ import type { MapTruck } from '@/components/tracking/FleetMap';
 import TruckDetailsPanel from '@/components/tracking/TruckDetailsPanel';
 import RoutePlayback from '@/components/tracking/RoutePlayback';
 import { io, Socket } from 'socket.io-client';
-import { getRoute } from '@/lib/routing';
-import { geocodeAddress } from '@/lib/geocoding';
+import { useShipmentRoute } from '@/lib/useShipmentRoute';
 
 const FleetMap = dynamic(() => import('@/components/tracking/FleetMap'), { ssr: false });
 
@@ -37,8 +36,6 @@ export default function OwnerTrackingPage() {
 
   // Selected truck for details & route
   const [selectedTruckId, setSelectedTruckId] = useState<string | null>(null);
-  const [routeData, setRouteData] = useState<{ coordinates: [number, number][]; distanceKm: number; durationText: string } | null>(null);
-  const [loadingRoute, setLoadingRoute] = useState(false);
 
   // Playback modal
   const [playbackTruckId, setPlaybackTruckId] = useState<string | null>(null);
@@ -82,11 +79,8 @@ export default function OwnerTrackingPage() {
   useEffect(() => {
     if (!user || user.role !== 'owner') return;
 
-    const token = typeof window !== 'undefined' ? localStorage.getItem('coldchain_jwt') : null;
-    if (!token) return;
-
     const socket = io(`${API_URL}/tracking`, {
-      auth: { token },
+      withCredentials: true,
       transports: ['websocket', 'polling'],
     });
 
@@ -118,48 +112,13 @@ export default function OwnerTrackingPage() {
     };
   }, [user]);
 
-  // 4. Calculate OSRM route when selected truck changes
+  // Select an active shipment automatically when the fleet first loads.
   useEffect(() => {
     if (!selectedTruckId) {
-      setRouteData(null);
-      return;
+      const active = trucks.find((truck) => truck.active_trip);
+      if (active) setSelectedTruckId(active.truck_id);
     }
-
-    const truck = trucks.find((t) => t.truck_id === selectedTruckId);
-    if (!truck?.active_trip || !truck?.location) {
-      setRouteData(null);
-      return;
-    }
-
-    const origin: [number, number] = [truck.location.latitude, truck.location.longitude];
-    const destination = truck.active_trip.destination;
-
-    setLoadingRoute(true);
-    (async () => {
-      try {
-        const geo = await geocodeAddress(destination);
-        if (!geo) return;
-
-        const result = await getRoute(origin, [geo.latitude, geo.longitude]);
-        if (result) {
-          setRouteData({
-            coordinates: result.coordinates,
-            distanceKm: result.distanceKm,
-            durationText: result.durationText,
-          });
-        }
-      } catch {
-        // Handle errors gracefully — leave routeData null
-      } finally {
-        setLoadingRoute(false);
-      }
-    })();
-  }, [selectedTruckId, trucks]);
-
-  // 5. Focus route handler (called by TruckDetailsPanel)
-  const handleFocusRoute = async (truckId: string) => {
-    setFocusTruckId(truckId);
-  };
+  }, [trucks, selectedTruckId]);
 
   // Filter trucks list
   const filteredTrucks = trucks.filter((t) => {
@@ -184,6 +143,7 @@ export default function OwnerTrackingPage() {
   });
 
   const selectedTruck = trucks.find((t) => t.truck_id === selectedTruckId) || null;
+  const routeData = useShipmentRoute(selectedTruck);
 
   if (loading || !user) return null;
 
@@ -344,7 +304,12 @@ export default function OwnerTrackingPage() {
                 setSelectedTruckId(t.truck_id);
                 setFocusTruckId(t.truck_id);
               }}
-              routeCoordinates={routeData?.coordinates}
+              routeCoordinates={routeData.coordinates}
+              remainingCoordinates={routeData.remainingCoordinates}
+              originCoords={routeData.originCoords}
+              destinationCoords={routeData.destinationCoords}
+              originName={routeData.originResolvedName || selectedTruck?.active_trip?.origin}
+              destinationName={routeData.destinationResolvedName || selectedTruck?.active_trip?.destination}
               focusTruckId={focusTruckId}
               height="100%"
             />
@@ -357,9 +322,11 @@ export default function OwnerTrackingPage() {
                 truck={selectedTruck}
                 onClose={() => {
                   setSelectedTruckId(null);
-                  setRouteData(null);
                 }}
-                onFocusRoute={handleFocusRoute}
+                routeStatus={routeData.status}
+                etaText={routeData.etaText}
+                remainingDistanceKm={routeData.remainingDistanceKm}
+                approximateEndpoints={routeData.approximateEndpoints}
                 onReplayHistory={(id) => setPlaybackTruckId(id)}
               />
             </div>

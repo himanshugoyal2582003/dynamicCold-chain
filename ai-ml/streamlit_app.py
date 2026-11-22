@@ -1,11 +1,13 @@
 import time
 import requests
+import os
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 
 API_BASE_URL = "http://localhost:8000"
+SERVICE_HEADERS = {"x-service-token": os.getenv("AIML_SERVICE_TOKEN", "")}
 
 st.set_page_config(
     page_title="ColdChain AI/ML Fleet Intelligence",
@@ -66,7 +68,7 @@ st.markdown("""
 @st.cache_data(ttl=5)
 def fetch_trucks():
     try:
-        res = requests.get(f"{API_BASE_URL}/api/trucks", timeout=3)
+        res = requests.get(f"{API_BASE_URL}/api/trucks", headers=SERVICE_HEADERS, timeout=3)
         if res.status_code == 200:
             return res.json().get("trucks", [])
     except Exception:
@@ -80,7 +82,7 @@ def fetch_trucks():
 # Fetch telemetry for selected truck
 def fetch_telemetry(truck_id: str):
     try:
-        res = requests.get(f"{API_BASE_URL}/api/trucks/{truck_id}/telemetry", timeout=3)
+        res = requests.get(f"{API_BASE_URL}/api/trucks/{truck_id}/telemetry", headers=SERVICE_HEADERS, timeout=3)
         if res.status_code == 200:
             return res.json()
     except Exception as e:
@@ -93,7 +95,7 @@ def inject_anomaly(truck_id: str, anomaly_type: str, custom_temp: float = None):
         payload = {"truck_id": truck_id, "anomaly_type": anomaly_type, "duration_seconds": 60}
         if custom_temp is not None:
             payload["custom_temp"] = custom_temp
-        res = requests.post(f"{API_BASE_URL}/api/trucks/{truck_id}/inject-anomaly", json=payload, timeout=3)
+        res = requests.post(f"{API_BASE_URL}/api/trucks/{truck_id}/inject-anomaly", json=payload, headers=SERVICE_HEADERS, timeout=3)
         if res.status_code == 200:
             st.toast(f"✅ Anomaly '{anomaly_type}' successfully applied to {truck_id}!", icon="⚡")
     except Exception as e:
@@ -280,6 +282,7 @@ if data and "latest" in data:
                     "humidity": latest["humidity"],
                     "transit_duration_hours": 4.5,
                 },
+                headers=SERVICE_HEADERS,
                 timeout=2,
             )
             if pred_res.status_code == 200:

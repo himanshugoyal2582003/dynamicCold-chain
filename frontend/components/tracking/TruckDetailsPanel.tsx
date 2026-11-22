@@ -1,32 +1,31 @@
 'use client';
 
-import { StatusBadge, formatDate, formatDateTime } from '@/components/ui/shared';
+import { StatusBadge, formatDateTime } from '@/components/ui/shared';
 import { MapTruck } from './FleetMap';
 
 interface TruckDetailsPanelProps {
   truck: MapTruck | null;
   onClose: () => void;
   onReplayHistory?: (truckId: string) => void;
-  onFocusRoute?: (truckId: string) => void;
+  routeStatus?: string;
+  etaText?: string;
+  remainingDistanceKm?: number | null;
+  approximateEndpoints?: boolean;
 }
 
 export default function TruckDetailsPanel({
   truck,
   onClose,
   onReplayHistory,
-  onFocusRoute,
+  routeStatus = 'Route unavailable',
+  etaText = 'Route unavailable',
+  remainingDistanceKm = null,
+  approximateEndpoints = false,
 }: TruckDetailsPanelProps) {
   if (!truck) return null;
 
   const loc = truck.location;
   const trip = truck.active_trip;
-
-  // External OpenStreetMap directions or search link
-  const osmUrl = loc
-    ? `https://www.openstreetmap.org/directions?from=${loc.latitude},${loc.longitude}&to=${encodeURIComponent(trip?.destination ?? '')}`
-    : trip
-    ? `https://www.openstreetmap.org/search?query=${encodeURIComponent(trip.destination)}`
-    : '#';
 
   return (
     <div
@@ -156,15 +155,16 @@ export default function TruckDetailsPanel({
               Dispatched: {formatDateTime(trip.started_at)}
             </p>
           )}
-
-          {onFocusRoute && (
-            <button
-              onClick={() => onFocusRoute(truck.truck_id)}
-              className="btn-ghost w-full py-1.5 text-xs text-center block mt-1"
-            >
-              🗺️ Display Route on Map
-            </button>
-          )}
+          <div className="p-3 rounded border space-y-2" style={{ background: 'var(--color-paper)', borderColor: 'var(--color-hairline)' }}>
+            <p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--color-slate)' }}>Estimated Arrival</p>
+            <p className="text-2xl font-bold tabular-nums" style={{ color: 'var(--color-ink)' }}>{etaText}</p>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div><span style={{ color: 'var(--color-slate)' }}>Remaining Distance</span><p className="font-semibold">{remainingDistanceKm === null ? '—' : `${remainingDistanceKm.toFixed(1)} km`}</p></div>
+              <div><span style={{ color: 'var(--color-slate)' }}>Current Speed</span><p className="font-semibold">{loc && truck.gps_status === 'live' ? `${(loc.speed_kmh ?? 0).toFixed(1)} km/h` : '—'}</p></div>
+              <div className="col-span-2"><span style={{ color: 'var(--color-slate)' }}>Route Status</span><p className="font-semibold">{routeStatus}</p></div>
+              {approximateEndpoints && <div className="col-span-2 text-[10px]" style={{ color: '#8A6B2E' }}>Endpoint names are not mapped as exact facilities; route endpoints use the closest matching mapped areas.</div>}
+            </div>
+          </div>
         </div>
       ) : (
         <div className="p-3 rounded text-center text-xs" style={{ background: 'var(--color-ivory)', color: 'var(--color-slate)' }}>
@@ -187,15 +187,6 @@ export default function TruckDetailsPanel({
             <span>⏪</span> Replay Trip History
           </button>
         )}
-
-        <a
-          href={osmUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="btn-ghost w-full py-2 text-xs text-center block"
-        >
-          📍 Open in OpenStreetMap ↗
-        </a>
       </div>
     </div>
   );

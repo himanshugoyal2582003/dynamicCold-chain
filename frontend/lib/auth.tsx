@@ -5,6 +5,14 @@ import { useRouter, usePathname } from 'next/navigation';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
+function getCsrfToken(): string | undefined {
+  if (typeof document === 'undefined') return undefined;
+  return document.cookie
+    .split('; ')
+    .find((cookie) => cookie.startsWith('coldchain_csrf='))
+    ?.split('=')[1];
+}
+
 // Inactivity timeout: 15 minutes of idle time
 const IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 const IDLE_WARNING_MS = 60 * 1000; // Warning shown 60s before auto-logout
@@ -43,19 +51,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async (reason?: string | any) => {
     try {
-      const storedToken = typeof window !== 'undefined' ? localStorage.getItem('coldchain_jwt') : null;
       await fetch(`${API}/api/auth/logout`, {
         method: 'POST',
         credentials: 'include',
-        headers: {
-          ...(storedToken ? { Authorization: `Bearer ${storedToken}`, 'x-auth-token': storedToken } : {}),
-        },
+        headers: getCsrfToken() ? { 'X-CSRF-Token': getCsrfToken()! } : {},
       });
     } catch {
       // Ignore network errors on logout
-    }
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('coldchain_jwt');
     }
     setUser(null);
     setIdleWarning(false);
@@ -109,13 +111,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Fetch initial profile
   async function fetchMe() {
     try {
-      const storedToken = typeof window !== 'undefined' ? localStorage.getItem('coldchain_jwt') : null;
       const res = await fetch(`${API}/api/auth/me`, {
         credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(storedToken ? { Authorization: `Bearer ${storedToken}`, 'x-auth-token': storedToken } : {}),
-        },
+        headers: { 'Content-Type': 'application/json' },
       });
       if (res.ok) {
         const data = await res.json();
@@ -172,9 +170,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     const data = await res.json();
-    if (data.token && typeof window !== 'undefined') {
-      localStorage.setItem('coldchain_jwt', data.token);
-    }
     setUser(data.user);
     lastActivityRef.current = Date.now();
 
@@ -268,11 +263,9 @@ export function useAuth() {
 }
 
 export async function apiFetch(path: string, options?: RequestInit) {
-  const storedToken = typeof window !== 'undefined' ? localStorage.getItem('coldchain_jwt') : null;
-
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(storedToken ? { Authorization: `Bearer ${storedToken}`, 'x-auth-token': storedToken } : {}),
+    ...(getCsrfToken() ? { 'X-CSRF-Token': getCsrfToken()! } : {}),
     ...((options?.headers as Record<string, string>) || {}),
   };
 
@@ -283,10 +276,7 @@ export async function apiFetch(path: string, options?: RequestInit) {
   });
 
   if (res.status === 401) {
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('coldchain_jwt');
-      window.location.href = '/login?reason=unauthorized';
-    }
+    if (typeof window !== 'undefined') window.location.href = '/login?reason=unauthorized';
     throw new Error('Authentication required. Session expired.');
   }
 

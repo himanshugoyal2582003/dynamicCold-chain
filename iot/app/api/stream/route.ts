@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getDeviceStore, setDeviceStore, stepDeviceSimulation, IoTDevice } from '@/lib/device-data';
 
 const AIML_API_URL = process.env.AIML_API_URL || 'http://localhost:8000/api/iot/process';
+const AIML_SERVICE_TOKEN = process.env.AIML_SERVICE_TOKEN;
 
 async function streamSingleDevice(device: IoTDevice) {
   // 1. Advance device simulation step
@@ -39,9 +40,10 @@ async function streamSingleDevice(device: IoTDevice) {
   let pipelineSuccess = false;
 
   try {
+    if (!AIML_SERVICE_TOKEN) throw new Error('AIML_SERVICE_TOKEN is not configured');
     const aiRes = await fetch(AIML_API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-service-token': AIML_SERVICE_TOKEN },
       body: JSON.stringify(rawPayload),
     });
 

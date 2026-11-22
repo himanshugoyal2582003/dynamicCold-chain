@@ -411,9 +411,11 @@ export class TrackingService {
       recorded_at: h.recorded_at,
     }));
 
-    // 5. Calculate remaining distance & ETA
-    let distanceRemainingKm: number | null = null;
-    let etaMinutes: number | null = null;
+    // 5. Geofence status. Road distance and ETA are calculated in the tracking
+    // map from the OSRM route and live telemetry; do not substitute straight-
+    // line distance or a fallback speed here.
+    const distanceRemainingKm: number | null = null;
+    const etaMinutes: number | null = null;
     let geofenceStatus: 'at_origin' | 'in_transit' | 'approaching_destination' | 'arrived' =
       'in_transit';
 
@@ -422,15 +424,13 @@ export class TrackingService {
       const origCoords = findCityCoords(activeTrip.origin);
 
       if (destCoords) {
-        distanceRemainingKm = Math.round(
-          haversineKm(currentLoc.latitude, currentLoc.longitude, destCoords[0], destCoords[1]),
+        const distanceToDestinationKm = haversineKm(
+          currentLoc.latitude, currentLoc.longitude, destCoords[0], destCoords[1],
         );
-        const effectiveSpeed = currentLoc.speed_kmh > 15 ? currentLoc.speed_kmh : 55;
-        etaMinutes = Math.round((distanceRemainingKm / effectiveSpeed) * 60);
 
-        if (distanceRemainingKm <= 2) {
+        if (distanceToDestinationKm <= 2) {
           geofenceStatus = 'arrived';
-        } else if (distanceRemainingKm <= 25) {
+        } else if (distanceToDestinationKm <= 25) {
           geofenceStatus = 'approaching_destination';
         } else if (
           origCoords &&

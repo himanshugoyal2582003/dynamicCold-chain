@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import requests
+import os
+import secrets
 from datetime import datetime
 from typing import Dict, List, Set, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
@@ -26,13 +28,29 @@ app = FastAPI(
     version="1.0.0",
 )
 
+SERVICE_TOKEN = os.getenv("AIML_SERVICE_TOKEN", "")
+BACKEND_INGEST_SECRET = os.getenv("IOT_INGEST_SECRET", "")
+
+def has_valid_service_token(token: str | None) -> bool:
+    return bool(SERVICE_TOKEN) and bool(token) and secrets.compare_digest(token, SERVICE_TOKEN)
+
+@app.middleware("http")
+async def require_service_auth(request, call_next):
+    # Health checks disclose no fleet data and must remain probeable.
+    if request.url.path == "/health":
+        return await call_next(request)
+    if not has_valid_service_token(request.headers.get("x-service-token")):
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=401, content={"detail": "Service authentication required"})
+    return await call_next(request)
+
 # Enable CORS for frontend and Streamlit
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[origin.strip() for origin in os.getenv("AIML_CORS_ORIGINS", "http://localhost:3001").split(",")],
+    allow_credentials=False,
+    allow_methods=["POST", "GET"],
+    allow_headers=["Content-Type", "x-service-token"],
 )
 
 # In-memory connection manager for WebSockets
@@ -257,8 +275,9 @@ def process_iot_telemetry(req: RawIoTTelemetry):
     # Forward to Main Backend (NestJS)
     try:
         requests.post(
-            "http://localhost:4000/api/iot/ingest",
+            f"{os.getenv('BACKEND_API_URL', 'http://localhost:4000')}/api/iot/ingest",
             json=processed.model_dump(),
+            headers={"x-iot-ingest-secret": BACKEND_INGEST_SECRET},
             timeout=2.0,
         )
     except Exception as e:
@@ -341,6 +360,9 @@ def predict_insurance_pricing(req: InsurancePricingRequest):
 # WebSocket connection per truck: sends live telemetry every 10 seconds
 @app.websocket("/ws/telemetry/{truck_id}")
 async def websocket_telemetry_endpoint(websocket: WebSocket, truck_id: str):
+    if not has_valid_service_token(websocket.headers.get("x-service-token")):
+        await websocket.close(code=1008)
+        return
     await manager.connect(truck_id, websocket)
     sim = fleet_manager.get_simulator(truck_id)
     try:

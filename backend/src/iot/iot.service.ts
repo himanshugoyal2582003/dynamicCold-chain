@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { NeonService } from '../neon/neon.service';
 
 export interface EnrichedIoTTelemetry {
@@ -31,7 +31,7 @@ export interface EnrichedIoTTelemetry {
 }
 
 @Injectable()
-export class IotService {
+export class IotService implements OnModuleInit {
   private readonly logger = new Logger(IotService.name);
 
   // Connection Number -> Latest Enriched Telemetry
@@ -48,46 +48,16 @@ export class IotService {
   private readonly lastDbSnapshotTime = new Map<string, number>();
   private readonly SNAPSHOT_INTERVAL_MS = 15 * 60 * 1000;
 
-  constructor(private readonly neonService: NeonService) {
-    this.ensureIotColumn();
+  constructor(private readonly neonService: NeonService) {}
+
+  async onModuleInit() {
+    await this.loadPersistedBindings();
   }
 
-  private async ensureIotColumn() {
+  private async loadPersistedBindings() {
     try {
       const sql = this.neonService.getSql();
       if (sql) {
-        await sql`ALTER TABLE trucks ADD COLUMN IF NOT EXISTS iot_connection_number VARCHAR(50);`;
-        await sql`ALTER TABLE trucks ADD COLUMN IF NOT EXISTS base_insurance_price NUMERIC(8,2) DEFAULT 450.00;`;
-        await sql`ALTER TABLE trucks ADD COLUMN IF NOT EXISTS current_insurance_price NUMERIC(8,2) DEFAULT 450.00;`;
-        await sql`ALTER TABLE trucks ADD COLUMN IF NOT EXISTS insurance_risk_score NUMERIC(5,2) DEFAULT 15.0;`;
-        await sql`ALTER TABLE trucks ADD COLUMN IF NOT EXISTS insurance_status VARCHAR(20) DEFAULT 'discounted';`;
-
-        // Historical 15-minute telemetry database table on Neon
-        await sql`
-          CREATE TABLE IF NOT EXISTS trip_telemetry_history (
-            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-            trip_id UUID REFERENCES trips(id) ON DELETE SET NULL,
-            truck_id UUID NOT NULL REFERENCES trucks(id) ON DELETE CASCADE,
-            device_id VARCHAR(50),
-            connection_number VARCHAR(50),
-            temperature NUMERIC(5,2) NOT NULL,
-            target_temp NUMERIC(5,2) NOT NULL,
-            humidity NUMERIC(5,2) NOT NULL,
-            battery NUMERIC(5,2) NOT NULL,
-            door_open BOOLEAN DEFAULT false,
-            gps_lat NUMERIC(9,6),
-            gps_lng NUMERIC(9,6),
-            speed_kmh NUMERIC(5,2),
-            spoilage_risk NUMERIC(5,2),
-            spoilage_risk_level VARCHAR(20),
-            rsl_hours NUMERIC(6,2),
-            quality_retention_pct NUMERIC(5,2),
-            route_recommendation TEXT,
-            recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-          );
-        `;
-
-        // Load initial bindings
         const rows = await sql`SELECT id, iot_connection_number FROM trucks WHERE iot_connection_number IS NOT NULL;`;
         for (const row of rows) {
           if (row.iot_connection_number) {
@@ -97,7 +67,7 @@ export class IotService {
         }
       }
     } catch (e: any) {
-      this.logger.warn(`Could not ensure iot_connection_number and history tables: ${e.message}`);
+      this.logger.error(`Could not load persisted IoT bindings. Run database migrations before starting the API: ${e.message}`);
     }
   }
 
@@ -209,9 +179,12 @@ export class IotService {
     // Call AI/ML insurance pricing engine
     let aiResponse: any = null;
     try {
-      const res = await fetch('http://localhost:8000/api/predict/insurance', {
+      const aiServiceUrl = process.env.AIML_API_URL || 'http://localhost:8000';
+      const aiServiceToken = process.env.AIML_SERVICE_TOKEN;
+      if (!aiServiceToken) throw new Error('AIML_SERVICE_TOKEN is not configured');
+      const res = await fetch(`${aiServiceUrl}/api/predict/insurance`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-service-token': aiServiceToken },
         body: JSON.stringify({
           truck_id: truckId,
           truck_type: truck.type,

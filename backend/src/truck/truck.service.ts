@@ -43,30 +43,39 @@ export class TruckService {
     truckId: string,
     data: { origin: string; destination: string; cargo_type: string; notes?: string },
   ) {
+    if (!data.origin?.trim() || !data.destination?.trim() || !data.cargo_type?.trim()) {
+      throw new BadRequestException('Origin, destination, and cargo type are required.');
+    }
     // Check no active trip
     const active = await this.getActiveTrip(truckId);
     if (active) throw new BadRequestException('Trip already in progress for this truck.');
 
     const rows = await this.sql(
-      `INSERT INTO trips (truck_id, user_id, origin, destination, cargo_type, notes)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      `WITH new_trip AS (
+         INSERT INTO trips (truck_id, user_id, origin, destination, cargo_type, notes)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *
+       ), update_truck AS (
+         UPDATE trucks SET status = 'on_trip' WHERE id = $1
+       ) SELECT * FROM new_trip`,
       [truckId, userId, data.origin, data.destination, data.cargo_type, data.notes || null],
     );
-
-    await this.sql(`UPDATE trucks SET status = 'on_trip' WHERE id = $1`, [truckId]);
     return rows[0];
   }
 
   async endTrip(userId: string, truckId: string, tripId: string) {
     const rows = await this.sql(
-      `UPDATE trips SET ended_at = NOW()
-       WHERE id = $1 AND truck_id = $2 AND user_id = $3 AND ended_at IS NULL
-       RETURNING *`,
+      `WITH ended_trip AS (
+         UPDATE trips SET ended_at = NOW()
+         WHERE id = $1 AND truck_id = $2 AND user_id = $3 AND ended_at IS NULL
+         RETURNING *
+       ), update_truck AS (
+         UPDATE trucks SET status = 'available'
+         WHERE id = $2 AND EXISTS (SELECT 1 FROM ended_trip)
+       ) SELECT * FROM ended_trip`,
       [tripId, truckId, userId],
     );
     if (!rows.length) throw new ForbiddenException('No active trip found to end.');
 
-    await this.sql(`UPDATE trucks SET status = 'available' WHERE id = $1`, [truckId]);
     return rows[0];
   }
 

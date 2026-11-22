@@ -9,6 +9,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Response, Request } from 'express';
+import { randomBytes } from 'crypto';
 import { AuthService } from './auth.service';
 import { extractJwtToken } from '../middlewares/auth.middleware';
 
@@ -32,48 +33,22 @@ export class AuthController {
       maxAge: 8 * 60 * 60 * 1000, // 8 hours
       path: '/',
     });
-
-    // 2. Transmit in Headers (Authorization: Bearer & x-auth-token)
-    res.setHeader('Authorization', `Bearer ${token}`);
-    res.setHeader('x-auth-token', token);
-
-    // 3. Return in JSON response body
-    return { success: true, token, user };
-  }
-
-  @Post('register')
-  @HttpCode(201)
-  async register(
-    @Body() body: { name: string; email: string; password: string; role: string },
-    @Res({ passthrough: true }) res: Response,
-  ) {
-    const { token, user } = await this.authService.register(
-      body.name,
-      body.email,
-      body.password,
-      body.role,
-    );
-
-    res.cookie('coldchain_token', token, {
-      httpOnly: true,
+    res.cookie('coldchain_csrf', randomBytes(32).toString('hex'), {
+      httpOnly: false,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
       maxAge: 8 * 60 * 60 * 1000,
       path: '/',
     });
 
-    res.setHeader('Authorization', `Bearer ${token}`);
-    res.setHeader('x-auth-token', token);
-
-    return { success: true, token, user };
+    return { success: true, user };
   }
 
   @Post('logout')
   @HttpCode(200)
   logout(@Res({ passthrough: true }) res: Response) {
     res.clearCookie('coldchain_token', { path: '/' });
-    res.removeHeader('Authorization');
-    res.removeHeader('x-auth-token');
+    res.clearCookie('coldchain_csrf', { path: '/' });
     return { success: true, message: 'Logged out.' };
   }
 

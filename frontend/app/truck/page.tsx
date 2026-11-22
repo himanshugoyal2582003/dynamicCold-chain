@@ -14,6 +14,8 @@ import {
   formatDateTime,
 } from '@/components/ui/shared';
 import dynamic from 'next/dynamic';
+import type { MapTruck } from '@/components/tracking/FleetMap';
+import { useShipmentRoute } from '@/lib/useShipmentRoute';
 const FleetMap = dynamic(() => import('@/components/tracking/FleetMap'), { ssr: false });
 
 const NAV = [
@@ -152,8 +154,6 @@ export default function TruckPanel() {
   const locationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── Route state ──
-  const [calculatedRoute, setCalculatedRoute] = useState<[number, number][] | null>(null);
-  const [routeInfo, setRouteInfo] = useState<{ distanceKm: number; durationText: string } | null>(null);
 
   // ── Offline GPS queue ──
   const offlineQueueRef = useRef<GpsPosition[]>([]);
@@ -221,41 +221,6 @@ export default function TruckPanel() {
   }, [user, fetchAll, fetchTelemetry]);
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // Route calculation: geocode destination + OSRM when active trip + GPS available
-  useEffect(() => {
-    if (!activeTrip || !gpsPosition) {
-      setCalculatedRoute(null);
-      setRouteInfo(null);
-      return;
-    }
-
-    let cancelled = false;
-
-    async function calcRoute() {
-      try {
-        const { geocodeAddress } = await import('@/lib/geocoding');
-        const { getRoute } = await import('@/lib/routing');
-
-        const dest = await geocodeAddress(activeTrip.destination);
-        if (cancelled || !dest) return;
-
-        const result = await getRoute(
-          [gpsPosition!.latitude, gpsPosition!.longitude],
-          [dest.latitude, dest.longitude]
-        );
-        if (cancelled || !result) return;
-
-        setCalculatedRoute(result.coordinates);
-        setRouteInfo({ distanceKm: result.distanceKm, durationText: result.durationText });
-      } catch {
-        // Graceful: route just won't display
-      }
-    }
-
-    calcRoute();
-    return () => { cancelled = true; };
-  }, [activeTrip, gpsPosition]);
-
   // ─────────────────────────────────────────────────────────────────────────────
   // GPS tracking
   const sendLocationToServer = useCallback(async (pos: GpsPosition) => {
@@ -459,13 +424,18 @@ export default function TruckPanel() {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // Navigation helpers — OpenStreetMap directions
-  function getOpenMapsUrl(): string {
-    if (!activeTrip) return '#';
-    const o = encodeURIComponent(activeTrip.origin || '');
-    const d = encodeURIComponent(activeTrip.destination || '');
-    return `https://www.openstreetmap.org/directions?from=${o}&to=${d}`;
-  }
+  const driverMapTruck: MapTruck | null = truck ? {
+    truck_id: truck.id,
+    plate_number: truck.plate_number,
+    status: truck.status,
+    gps_status: gpsStatus === 'active' ? 'live' : 'no_data',
+    location: gpsPosition ? {
+      latitude: gpsPosition.latitude, longitude: gpsPosition.longitude,
+      speed_kmh: gpsPosition.speed_kmh, heading: gpsPosition.heading ?? 0,
+    } : null,
+    active_trip: activeTrip,
+  } : null;
+  const shipmentRoute = useShipmentRoute(driverMapTruck);
 
   // ─────────────────────────────────────────────────────────────────────────────
   if (loading || !user) return null;
@@ -604,16 +574,6 @@ export default function TruckPanel() {
                 )}
               </div>
 
-              {/* Open in OSM button */}
-              <a
-                href={getOpenMapsUrl()}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn-ghost w-full text-center block mb-3 py-2.5 text-sm"
-              >
-                🗺️ Open Navigation (OSM)
-              </a>
-
               <button
                 className="w-full py-4 rounded text-sm font-bold transition-colors"
                 style={{ background: 'var(--status-issue)', color: 'white' }}
@@ -668,18 +628,24 @@ export default function TruckPanel() {
                         ]
                       : []
                   }
-                  routeCoordinates={calculatedRoute || []}
+                  routeCoordinates={shipmentRoute.coordinates}
+                  remainingCoordinates={shipmentRoute.remainingCoordinates}
+                  originCoords={shipmentRoute.originCoords}
+                  destinationCoords={shipmentRoute.destinationCoords}
+                  originName={shipmentRoute.originResolvedName || activeTrip.origin}
+                  destinationName={shipmentRoute.destinationResolvedName || activeTrip.destination}
                   height="280px"
                 />
               </div>
               {/* Route info bar */}
-              {routeInfo && (
+              {activeTrip && (
                 <div
                   style={{ background: 'var(--color-ivory)', borderColor: 'var(--color-hairline)' }}
                   className="flex gap-4 px-4 py-2 text-xs border-t"
                 >
-                  <span>📏 {routeInfo.distanceKm.toFixed(1)} km remaining</span>
-                  <span>⏱ {routeInfo.durationText}</span>
+                  <span>📏 {shipmentRoute.remainingDistanceKm === null ? 'Distance unavailable' : `${shipmentRoute.remainingDistanceKm.toFixed(1)} km remaining`}</span>
+                  <span>⏱ {shipmentRoute.etaText}</span>
+                  {shipmentRoute.approximateEndpoints && <span className="text-amber-700">Endpoint matches are area-level</span>}
                 </div>
               )}
             </div>

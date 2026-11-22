@@ -126,6 +126,9 @@ export class OwnerService {
   }
 
   async updateTargetTemp(ownerId: string, truckId: string, targetTempC: number) {
+    if (!Number.isFinite(targetTempC) || targetTempC < -30 || targetTempC > 25) {
+      throw new ForbiddenException('Target temperature must be between -30°C and +25°C.');
+    }
     const check = await this.sql(
       `SELECT id FROM trucks WHERE id = $1 AND owner_id = $2 AND active = true`,
       [truckId, ownerId],

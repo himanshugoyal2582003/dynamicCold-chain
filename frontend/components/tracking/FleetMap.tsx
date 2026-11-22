@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -38,6 +38,7 @@ interface FleetMapProps {
   selectedTruckId?: string | null;
   onSelectTruck?: (truck: MapTruck) => void;
   routeCoordinates?: [number, number][];
+  remainingCoordinates?: [number, number][];
   originCoords?: [number, number] | null;
   destinationCoords?: [number, number] | null;
   originName?: string;
@@ -58,6 +59,12 @@ function getStatusColor(status: string): string {
     case 'available':   return '#2E7D5B';
     default:            return '#5B6470';
   }
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[character] as string);
 }
 
 function buildTruckIconHtml(truck: MapTruck, isSelected: boolean): string {
@@ -81,7 +88,7 @@ function buildTruckIconHtml(truck: MapTruck, isSelected: boolean): string {
       </div>
       <div class="mt-1 px-1.5 py-0.5 rounded shadow-sm text-[10px] font-mono font-bold whitespace-nowrap"
            style="background:#14171C;color:#FFFFFF;border:1px solid #E3E1DC;">
-        ${truck.plate_number}
+        ${escapeHtml(truck.plate_number)}
       </div>
     </div>
   `;
@@ -96,6 +103,7 @@ export default function FleetMap({
   selectedTruckId,
   onSelectTruck,
   routeCoordinates,
+  remainingCoordinates,
   originCoords,
   destinationCoords,
   originName,
@@ -107,8 +115,11 @@ export default function FleetMap({
   const mapContainerRef   = useRef<HTMLDivElement>(null);
   const mapRef            = useRef<any>(null);
   const mapReadyRef       = useRef(false);
+  const [mapReady, setMapReady] = useState(false);
   const markersRef        = useRef<Map<string, any>>(new Map());
   const polylineRef       = useRef<any>(null);
+  const casingRef         = useRef<any>(null);
+  const remainingPolylineRef = useRef<any>(null);
   const endpointMarkersRef= useRef<any[]>([]);
 
   // Keep latest callback in a ref so effects don't re-subscribe on every render
@@ -168,6 +179,7 @@ export default function FleetMap({
 
       mapRef.current = map;
       mapReadyRef.current = true;
+      setMapReady(true);
 
       // Invalidate size once DOM layout settles so tiles render completely without blank gaps
       setTimeout(() => {
@@ -248,7 +260,7 @@ export default function FleetMap({
     };
 
     syncMarkers().catch(console.error);
-  }, [trucks, selectedTruckId]);
+  }, [trucks, selectedTruckId, mapReady]);
 
   // ───────────────────────────────────────────────────────────────────────────
   // 3. Focus truck (flyTo)
@@ -271,25 +283,31 @@ export default function FleetMap({
 
       const L = (await import('leaflet')).default;
 
-      // Clear previous polyline
+      // The planned route is stable for the shipment. Update its layer only
+      // when the shipment changes; GPS updates only touch the remaining leg.
       if (polylineRef.current) {
         polylineRef.current.remove();
         polylineRef.current = null;
+      }
+      if (casingRef.current) {
+        casingRef.current.remove();
+        casingRef.current = null;
       }
 
       // Clear previous endpoint markers
       endpointMarkersRef.current.forEach((m) => m.remove());
       endpointMarkersRef.current = [];
 
-      // Draw route polyline
+      // Draw route beneath markers with a subtle casing and bright blue line.
       if (routeCoordinates && routeCoordinates.length > 1) {
-        const polyline = L.polyline(routeCoordinates, {
-          color: '#2F5D8A',
-          weight: 4,
-          opacity: 0.85,
-          dashArray: '8, 6',
+        casingRef.current = L.polyline(routeCoordinates, {
+          color: '#FFFFFF', weight: 10, opacity: 0.9,
           lineCap: 'round',
           lineJoin: 'round',
+        }).addTo(map);
+        const polyline = L.polyline(routeCoordinates, {
+          color: '#2563EB', weight: 6, opacity: 0.9,
+          lineCap: 'round', lineJoin: 'round',
         }).addTo(map);
         polylineRef.current = polyline;
         map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
@@ -298,30 +316,55 @@ export default function FleetMap({
       // Origin marker (A)
       if (originCoords) {
         const originHtml = `
-          <div class="flex items-center justify-center w-6 h-6 rounded-full shadow-md text-xs font-bold text-white"
-               style="background:#2E7D5B;border:2px solid #FFFFFF;">A</div>
+          <div style="display:flex;align-items:center;gap:5px;white-space:nowrap;transform:translate(-50%,-50%);">
+            <span style="display:flex;align-items:center;justify-content:center;width:25px;height:25px;border-radius:50%;background:#2E7D5B;border:2px solid #fff;color:#fff;font-weight:700;box-shadow:0 2px 7px #0004">A</span>
+            <span style="padding:3px 6px;border-radius:4px;background:#fff;color:#2E7D5B;border:1px solid #2E7D5B;font:bold 10px sans-serif">SOURCE</span>
+          </div>
         `;
-        const originIcon = L.divIcon({ html: originHtml, className: 'endpoint-icon', iconSize: [24, 24], iconAnchor: [12, 12] });
+        const originIcon = L.divIcon({ html: originHtml, className: 'endpoint-icon', iconSize: [100, 30], iconAnchor: [12, 12] });
         const mOrigin = L.marker(originCoords, { icon: originIcon }).addTo(map);
-        if (originName) mOrigin.bindPopup(`<b>Origin:</b> ${originName}`);
+        if (originName) mOrigin.bindPopup(`<b>Source:</b> ${escapeHtml(originName)}`);
         endpointMarkersRef.current.push(mOrigin);
       }
 
       // Destination marker (B)
       if (destinationCoords) {
         const destHtml = `
-          <div class="flex items-center justify-center w-6 h-6 rounded-full shadow-md text-xs font-bold text-white"
-               style="background:#A3262A;border:2px solid #FFFFFF;">B</div>
+          <div style="display:flex;align-items:center;gap:5px;white-space:nowrap;transform:translate(-50%,-50%);">
+            <span style="display:flex;align-items:center;justify-content:center;width:25px;height:25px;border-radius:50%;background:#A3262A;border:2px solid #fff;color:#fff;font-weight:700;box-shadow:0 2px 7px #0004">B</span>
+            <span style="padding:3px 6px;border-radius:4px;background:#fff;color:#A3262A;border:1px solid #A3262A;font:bold 10px sans-serif">DESTINATION</span>
+          </div>
         `;
-        const destIcon = L.divIcon({ html: destHtml, className: 'endpoint-icon', iconSize: [24, 24], iconAnchor: [12, 12] });
+        const destIcon = L.divIcon({ html: destHtml, className: 'endpoint-icon', iconSize: [135, 30], iconAnchor: [12, 12] });
         const mDest = L.marker(destinationCoords, { icon: destIcon }).addTo(map);
-        if (destinationName) mDest.bindPopup(`<b>Destination:</b> ${destinationName}`);
+        if (destinationName) mDest.bindPopup(`<b>Destination:</b> ${escapeHtml(destinationName)}`);
         endpointMarkersRef.current.push(mDest);
       }
     };
 
     syncRoute().catch(console.error);
-  }, [routeCoordinates, originCoords, destinationCoords, originName, destinationName]);
+  }, [mapReady, routeCoordinates, originCoords, destinationCoords, originName, destinationName]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const map = mapRef.current;
+      if (!map) return;
+      const L = (await import('leaflet')).default;
+      if (cancelled) return;
+      if (remainingPolylineRef.current) {
+        remainingPolylineRef.current.remove();
+        remainingPolylineRef.current = null;
+      }
+      if (remainingCoordinates && remainingCoordinates.length > 1) {
+        remainingPolylineRef.current = L.polyline(remainingCoordinates, {
+          color: '#7C8798', weight: 3, opacity: 0.8, dashArray: '5, 7',
+          lineCap: 'round', lineJoin: 'round',
+        }).addTo(map);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [mapReady, remainingCoordinates]);
 
   // ───────────────────────────────────────────────────────────────────────────
   // Fit all fleet trucks in view
