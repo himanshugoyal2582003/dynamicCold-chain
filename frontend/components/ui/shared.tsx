@@ -13,6 +13,10 @@ const STATUS_MAP: Record<string, string> = {
   open: 'badge-open',
   investigating: 'badge-investigating',
   resolved: 'badge-resolved',
+  ASSIGNED: 'badge-available',
+  IN_PROGRESS: 'badge-on-trip',
+  COMPLETED: 'badge-resolved',
+  CANCELLED: 'badge-issue',
 };
 
 export function StatusBadge({ status }: BadgeProps) {

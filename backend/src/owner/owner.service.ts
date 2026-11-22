@@ -71,7 +71,7 @@ export class OwnerService {
     return this.sql(
       `SELECT tr.*, u.name AS driver_name
        FROM trips tr LEFT JOIN users u ON u.id = tr.user_id
-       WHERE tr.truck_id = $1 ORDER BY tr.started_at DESC LIMIT 20`,
+       WHERE tr.truck_id = $1 ORDER BY tr.assigned_at DESC LIMIT 100`,
       [truckId],
     );
   }

@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/shared';
 
 const NAV = [
+  { href: '/owner/trips', label: 'Trip Management', icon: '🛣️' },
   { href: '/owner', label: 'My Fleet', icon: '🚛' },
   { href: '/owner/drivers', label: 'Drivers', icon: '👤' },
 ];
@@ -604,6 +605,8 @@ export default function TruckDetail() {
               <table className="data-table">
                 <thead>
                   <tr>
+                    <th>Status</th>
+                    <th>Assigned</th>
                     <th>Started</th>
                     <th>Ended</th>
                     <th>Driver</th>
@@ -615,11 +618,11 @@ export default function TruckDetail() {
                 <tbody>
                   {trips.map(tr => (
                     <tr key={tr.id}>
+                      <td><StatusBadge status={tr.status} /></td>
+                      <td className="tabular-nums text-xs">{formatDateTime(tr.assigned_at)}</td>
                       <td className="tabular-nums text-xs">{formatDateTime(tr.started_at)}</td>
                       <td className="tabular-nums text-xs">
-                        {tr.ended_at ? formatDateTime(tr.ended_at) : (
-                          <span className="badge-on-trip inline-block px-2 py-0.5 rounded text-xs font-semibold">Active</span>
-                        )}
+                        {formatDateTime(tr.ended_at)}
                       </td>
                       <td className="text-sm font-medium">{tr.driver_name}</td>
                       <td className="text-sm text-gray-400">{tr.origin}</td>

@@ -56,51 +56,10 @@ export class TruckService {
 
   async getActiveTrip(truckId: string) {
     const rows = await this.sql(
-      `SELECT * FROM trips WHERE truck_id = $1 AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1`,
+      `SELECT * FROM trips WHERE truck_id = $1 AND status = 'IN_PROGRESS' ORDER BY started_at DESC LIMIT 1`,
       [truckId],
     );
     return rows[0] || null;
-  }
-
-  async startTrip(
-    userId: string,
-    truckId: string,
-    data: { origin: string; destination: string; cargo_type: string; notes?: string },
-  ) {
-    if (!data.origin?.trim() || !data.destination?.trim() || !data.cargo_type?.trim()) {
-      throw new BadRequestException('Origin, destination, and cargo type are required.');
-    }
-    // Check no active trip
-    const active = await this.getActiveTrip(truckId);
-    if (active) throw new BadRequestException('Trip already in progress for this truck.');
-
-    const rows = await this.sql(
-      `WITH new_trip AS (
-         INSERT INTO trips (truck_id, user_id, origin, destination, cargo_type, notes)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *
-       ), update_truck AS (
-         UPDATE trucks SET status = 'on_trip' WHERE id = $1
-       ) SELECT * FROM new_trip`,
-      [truckId, userId, data.origin, data.destination, data.cargo_type, data.notes || null],
-    );
-    return rows[0];
-  }
-
-  async endTrip(userId: string, truckId: string, tripId: string) {
-    const rows = await this.sql(
-      `WITH ended_trip AS (
-         UPDATE trips SET ended_at = NOW()
-         WHERE id = $1 AND truck_id = $2 AND user_id = $3 AND ended_at IS NULL
-         RETURNING *
-       ), update_truck AS (
-         UPDATE trucks SET status = 'available'
-         WHERE id = $2 AND EXISTS (SELECT 1 FROM ended_trip)
-       ) SELECT * FROM ended_trip`,
-      [tripId, truckId, userId],
-    );
-    if (!rows.length) throw new ForbiddenException('No active trip found to end.');
-
-    return rows[0];
   }
 
   async setTargetTemp(truckId: string, targetTempC: number) {
@@ -123,12 +82,13 @@ export class TruckService {
     return rows[0];
   }
 
-  async getTripHistory(truckId: string) {
+  async getTripHistory(driverId: string) {
     return this.sql(
-      `SELECT tr.*, u.name AS driver_name
+      `SELECT tr.*, u.name AS driver_name, t.plate_number
        FROM trips tr LEFT JOIN users u ON u.id = tr.user_id
-       WHERE tr.truck_id = $1 ORDER BY tr.started_at DESC LIMIT 20`,
-      [truckId],
+       JOIN trucks t ON t.id = tr.truck_id
+       WHERE tr.user_id = $1 ORDER BY tr.assigned_at DESC, tr.id DESC`,
+      [driverId],
     );
   }
 

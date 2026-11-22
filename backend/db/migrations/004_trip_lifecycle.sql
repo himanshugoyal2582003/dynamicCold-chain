@@ -1,5 +1,10 @@
 -- Add a lifecycle while preserving existing trip history.
 ALTER TABLE trips ADD COLUMN IF NOT EXISTS status VARCHAR(20);
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ;
+
+UPDATE trips
+SET assigned_at = COALESCE(started_at, ended_at, CURRENT_TIMESTAMP)
+WHERE assigned_at IS NULL;
 
 UPDATE trips
 SET status = CASE
@@ -11,6 +16,8 @@ WHERE status IS NULL;
 
 ALTER TABLE trips ALTER COLUMN status SET DEFAULT 'ASSIGNED';
 ALTER TABLE trips ALTER COLUMN status SET NOT NULL;
+ALTER TABLE trips ALTER COLUMN assigned_at SET DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE trips ALTER COLUMN assigned_at SET NOT NULL;
 ALTER TABLE trips ALTER COLUMN started_at DROP NOT NULL;
 ALTER TABLE trips ALTER COLUMN started_at DROP DEFAULT;
 

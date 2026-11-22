@@ -10,6 +10,7 @@ import { StatusBadge, Spinner, EmptyState, ErrorAlert, SuccessAlert, Modal, form
 const NAV = [
   { href: '/admin', label: 'Overview', icon: '◈' },
   { href: '/admin/tracking', label: 'Global Map', icon: '📍' },
+  { href: '/admin/trips', label: 'Trips', icon: '🛣️' },
   { href: '/admin/owners', label: 'Owners', icon: '🏢' },
   { href: '/admin/trucks', label: 'Trucks', icon: '🚛' },
   { href: '/admin/users', label: 'Drivers', icon: '👤' },

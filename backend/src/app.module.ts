@@ -8,11 +8,13 @@ import { OwnerModule } from './owner/owner.module';
 import { TruckModule } from './truck/truck.module';
 import { IotModule } from './iot/iot.module';
 import { TrackingModule } from './tracking/tracking.module';
+import { TripsModule } from './trips/trips.module';
 import { AdminController } from './admin/admin.controller';
 import { OwnerController } from './owner/owner.controller';
 import { TruckController } from './truck/truck.controller';
 import { IotController } from './iot/iot.controller';
 import { TrackingController } from './tracking/tracking.controller';
+import { TripsController, DriverTripsController } from './trips/trips.controller';
 import { NeonController } from './neon/neon.controller';
 import { AuthGuardMiddleware } from './middlewares/auth.middleware';
 import { CsrfMiddleware } from './middlewares/csrf.middleware';
@@ -34,6 +36,7 @@ import { CsrfMiddleware } from './middlewares/csrf.middleware';
     TruckModule,
     IotModule,
     TrackingModule,
+    TripsModule,
   ],
 })
 export class AppModule implements NestModule {
@@ -53,6 +56,8 @@ export class AppModule implements NestModule {
         TruckController,
         IotController,
         TrackingController,
+        TripsController,
+        DriverTripsController,
         NeonController,
         { path: 'api/auth/me', method: RequestMethod.GET },
         { path: 'api/auth/logout', method: RequestMethod.POST },

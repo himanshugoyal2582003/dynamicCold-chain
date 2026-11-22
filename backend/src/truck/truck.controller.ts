@@ -34,21 +34,6 @@ export class TruckController {
     return { success: true, trip };
   }
 
-  @Post('start-trip')
-  async startTrip(
-    @Req() req: Request,
-    @Body() body: { origin: string; destination: string; cargo_type: string; notes?: string },
-  ) {
-    const { userId, truckId } = assertAssignedTruckUser(req);
-    return this.truckService.startTrip(userId, truckId, body);
-  }
-
-  @Post('end-trip/:tripId')
-  async endTrip(@Req() req: Request, @Param('tripId') tripId: string) {
-    const { userId, truckId } = assertAssignedTruckUser(req);
-    return this.truckService.endTrip(userId, truckId, tripId);
-  }
-
   @Patch('target-temp')
   async setTargetTemp(@Req() req: Request, @Body() body: { targetTempC: number }) {
     const { truckId } = assertAssignedTruckUser(req);
@@ -63,8 +48,8 @@ export class TruckController {
 
   @Get('trip-history')
   async getTripHistory(@Req() req: Request) {
-    const { truckId } = assertAssignedTruckUser(req);
-    return this.truckService.getTripHistory(truckId);
+    const { userId } = assertTruckUser(req);
+    return this.truckService.getTripHistory(userId);
   }
 
   @Get('issues')

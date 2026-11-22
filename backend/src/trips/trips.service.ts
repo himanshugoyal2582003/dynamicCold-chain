@@ -41,6 +41,7 @@ export class TripsService {
       `SELECT d.id, d.name, d.email, d.owner_id, d.truck_id, t.plate_number,
               CASE WHEN d.active = true AND t.active = true AND t.status = 'available'
                 AND NOT EXISTS (SELECT 1 FROM trips tr WHERE tr.user_id = d.id AND tr.status IN ('ASSIGNED','IN_PROGRESS'))
+                AND NOT EXISTS (SELECT 1 FROM trips tr WHERE tr.truck_id = t.id AND tr.status IN ('ASSIGNED','IN_PROGRESS'))
                 THEN true ELSE false END AS eligible
        FROM users d LEFT JOIN trucks t ON t.id = d.truck_id
        WHERE d.role = 'truckUser' AND d.active = true AND d.truck_id IS NOT NULL ${driverOwnerFilter}
@@ -53,6 +54,12 @@ export class TripsService {
     truck_id: string; user_id: string; origin: string; destination: string; cargo_type: string; notes?: string;
   }) {
     if (!['admin', 'owner'].includes(actor.role)) throw new ForbiddenException('Only administrators and fleet owners can assign trips.');
+    if (typeof input.origin !== 'string' || typeof input.destination !== 'string' || typeof input.cargo_type !== 'string') {
+      throw new BadRequestException('Origin, destination, and cargo_type are required.');
+    }
+    if (input.notes !== undefined && input.notes !== null && typeof input.notes !== 'string') {
+      throw new BadRequestException('Shipment notes must be text.');
+    }
     const origin = input.origin.trim();
     const destination = input.destination.trim();
     const cargoType = input.cargo_type.trim();
@@ -129,7 +136,7 @@ export class TripsService {
        FROM trips tr JOIN trucks t ON t.id = tr.truck_id
        LEFT JOIN users owner ON owner.id = t.owner_id
        LEFT JOIN users d ON d.id = tr.user_id
-       WHERE ${clauses.join(' AND ')} ORDER BY tr.started_at DESC NULLS LAST, tr.id DESC`,
+       WHERE ${clauses.join(' AND ')} ORDER BY tr.assigned_at DESC, tr.id DESC`,
       values,
     );
     return { success: true, trips };
@@ -166,7 +173,7 @@ export class TripsService {
   async getDriverHistory(userId: string) {
     return this.sql(
       `SELECT tr.*, t.plate_number FROM trips tr JOIN trucks t ON t.id = tr.truck_id
-       WHERE tr.user_id = $1::uuid ORDER BY COALESCE(tr.started_at, tr.ended_at) DESC NULLS LAST, tr.id DESC`,
+       WHERE tr.user_id = $1::uuid ORDER BY tr.assigned_at DESC, tr.id DESC`,
       [userId],
     );
   }
@@ -216,6 +223,35 @@ export class TripsService {
     if (!row) throw new ConflictException('Only your in-progress trip can be completed.');
     const trip = await this.getTripById(row.id, 'truckUser', userId);
     this.gateway.broadcastTripUpdate(trip, 'trip:completed');
+    return { success: true, trip };
+  }
+
+  async reopenCompletedTrip(adminId: string, tripId: string, reason: string) {
+    const results = await this.neon.runTransaction([{
+      text: `WITH reopened AS (
+               UPDATE trips tr SET status = 'IN_PROGRESS', ended_at = NULL
+               WHERE tr.id = $1::uuid AND tr.status = 'COMPLETED'
+                 AND NOT EXISTS (
+                   SELECT 1 FROM trips other WHERE other.id <> tr.id
+                     AND (other.truck_id = tr.truck_id OR other.user_id = tr.user_id)
+                     AND other.status IN ('ASSIGNED', 'IN_PROGRESS')
+                 )
+               RETURNING tr.*
+             ), truck AS (
+               UPDATE trucks t SET status = 'on_trip'
+               FROM reopened r WHERE t.id = r.truck_id
+             ), audit AS (
+               INSERT INTO activity_log (actor_id, action, entity, entity_id, details)
+               SELECT $2::uuid, 'TRIP_REOPENED_BY_ADMIN', 'TRIP', id,
+                 jsonb_build_object('reason', $3::text, 'previous_status', 'COMPLETED', 'new_status', 'IN_PROGRESS')
+               FROM reopened
+             ) SELECT * FROM reopened`,
+      values: [tripId, adminId, reason],
+    }]);
+    const reopened = results[0]?.[0];
+    if (!reopened) throw new ConflictException('Only a completed trip without another committed trip can be reopened.');
+    const trip = await this.getTripById(tripId, 'admin', adminId);
+    this.gateway.broadcastTripUpdate(trip, 'trip:reopened');
     return { success: true, trip };
   }
 }

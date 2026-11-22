@@ -7,6 +7,7 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Spinner, EmptyState, ErrorAlert, SuccessAlert, Modal } from '@/components/ui/shared';
 
 const NAV = [
+  { href: '/owner/trips', label: 'Trip Management', icon: '🛣️' },
   { href: '/owner', label: 'My Fleet', icon: '🚛' },
   { href: '/owner/tracking', label: 'Live Tracking', icon: '📍' },
   { href: '/owner/drivers', label: 'Drivers', icon: '👤' },

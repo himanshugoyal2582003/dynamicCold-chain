@@ -76,6 +76,14 @@ export class TrackingGateway
       return;
     }
 
+    const currentUser = await this.authService.getMe(user.sub);
+    if (!currentUser) {
+      client.emit('error', { message: 'Authenticated account is unavailable.' });
+      client.disconnect(true);
+      return;
+    }
+    user = currentUser;
+
     // Attach user payload to socket data for later reference
     (client as any).data = { ...((client as any).data || {}), user };
 

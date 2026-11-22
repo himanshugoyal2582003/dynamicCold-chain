@@ -17,6 +17,7 @@ const FleetMap = dynamic(() => import('@/components/tracking/FleetMap'), { ssr: 
 const NAV = [
   { href: '/admin', label: 'Overview', icon: '◈' },
   { href: '/admin/tracking', label: 'Global Map', icon: '📍' },
+  { href: '/admin/trips', label: 'Trips', icon: '🛣️' },
   { href: '/admin/owners', label: 'Owners', icon: '🏢' },
   { href: '/admin/trucks', label: 'Trucks', icon: '🚛' },
   { href: '/admin/users', label: 'Drivers', icon: '👤' },
@@ -122,10 +123,14 @@ export default function AdminGlobalTrackingPage() {
       );
     });
 
+    ['trip:assigned', 'trip:started', 'trip:completed', 'trip:update'].forEach((event) => {
+      socket.on(event, () => fetchData(false));
+    });
+
     return () => {
       socket.disconnect();
     };
-  }, [user]);
+  }, [user, fetchData]);
 
   // Select an active shipment automatically when the fleet first loads.
   useEffect(() => {
@@ -186,7 +191,7 @@ export default function AdminGlobalTrackingPage() {
           <div className="p-3.5 rounded border" style={{ background: 'var(--color-paper)', borderColor: 'var(--color-hairline)' }}>
             <span className="text-xs uppercase text-slate-500 font-medium">Active En-Route</span>
             <p className="text-2xl font-bold tabular-nums" style={{ color: '#2F5D8A' }}>
-              {trucks.filter((t) => Boolean(t.active_trip)).length}
+              {trucks.filter((t) => t.active_trip?.status === 'IN_PROGRESS').length}
             </p>
           </div>
           <div className="p-3.5 rounded border" style={{ background: 'var(--color-paper)', borderColor: 'var(--color-hairline)' }}>

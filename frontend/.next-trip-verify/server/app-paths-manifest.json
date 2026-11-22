@@ -1,0 +1,21 @@
+{
+  "/_not-found/page": "app/_not-found/page.js",
+  "/admin/trips/page": "app/admin/trips/page.js",
+  "/admin/owners/page": "app/admin/owners/page.js",
+  "/admin/tracking/page": "app/admin/tracking/page.js",
+  "/login/page": "app/login/page.js",
+  "/admin/page": "app/admin/page.js",
+  "/admin/activity/page": "app/admin/activity/page.js",
+  "/admin/trucks/page": "app/admin/trucks/page.js",
+  "/admin/users/page": "app/admin/users/page.js",
+  "/owner/drivers/page": "app/owner/drivers/page.js",
+  "/owner/trips/page": "app/owner/trips/page.js",
+  "/owner/tracking/page": "app/owner/tracking/page.js",
+  "/signup/page": "app/signup/page.js",
+  "/owner/page": "app/owner/page.js",
+  "/owner/trucks/[id]/page": "app/owner/trucks/[id]/page.js",
+  "/truck/page": "app/truck/page.js",
+  "/page": "app/page.js",
+  "/truck/issues/page": "app/truck/issues/page.js",
+  "/truck/history/page": "app/truck/history/page.js"
+}

@@ -8,6 +8,7 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import { StatusBadge, Spinner, EmptyState, ErrorAlert, Modal, formatDate, isExpired, isExpiringSoon } from '@/components/ui/shared';
 
 const NAV = [
+  { href: '/owner/trips', label: 'Trip Management', icon: '🛣️' },
   { href: '/owner', label: 'My Fleet', icon: '🚛' },
   { href: '/owner/tracking', label: 'Live Tracking', icon: '📍' },
   { href: '/owner/drivers', label: 'Drivers', icon: '👤' },

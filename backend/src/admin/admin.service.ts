@@ -19,7 +19,7 @@ export class AdminService {
         (SELECT COUNT(*)::int FROM users WHERE role = 'owner' AND active = true) AS total_owners,
         (SELECT COUNT(*)::int FROM trucks WHERE active = true) AS total_trucks,
         (SELECT COUNT(*)::int FROM users WHERE role = 'truckUser' AND active = true) AS active_drivers,
-        (SELECT COUNT(*)::int FROM trucks WHERE status = 'on_trip' AND active = true) AS trucks_on_trip
+        (SELECT COUNT(*)::int FROM trips WHERE status = 'IN_PROGRESS') AS trucks_on_trip
     `);
     return rows[0];
   }

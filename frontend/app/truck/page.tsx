@@ -16,6 +16,7 @@ import {
 import dynamic from 'next/dynamic';
 import type { MapTruck } from '@/components/tracking/FleetMap';
 import { useShipmentRoute } from '@/lib/useShipmentRoute';
+import { io } from 'socket.io-client';
 const FleetMap = dynamic(() => import('@/components/tracking/FleetMap'), { ssr: false });
 
 const NAV = [
@@ -123,8 +124,7 @@ export default function TruckPanel() {
   const [success, setSuccess] = useState('');
 
   // ── Trip modals ──
-  const [showStartTrip, setShowStartTrip] = useState(false);
-  const [tripForm, setTripForm] = useState({ origin: '', destination: '', cargo_type: '', notes: '' });
+  const [showCompleteConfirm, setShowCompleteConfirm] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // ── Temp control ──
@@ -197,12 +197,12 @@ export default function TruckPanel() {
         return;
       }
       const [tripResponse, iss] = await Promise.all([
-        apiFetch('/api/truck/active-trip'),
+        apiFetch('/api/truck/assigned-trip'),
         apiFetch('/api/truck/issues'),
       ]);
       if (iss != null && !Array.isArray(iss)) throw new Error('GET /api/truck/issues returned an invalid issue response.');
       if (!tripResponse || tripResponse.success !== true || (tripResponse.trip !== null && typeof tripResponse.trip !== 'object')) {
-        throw new Error('The active trip service returned an invalid response.');
+        throw new Error('The assigned trip service returned an invalid response.');
       }
       setActiveTrip(tripResponse.trip);
       setIssuesList(Array.isArray(iss) ? iss : []);
@@ -222,6 +222,15 @@ export default function TruckPanel() {
       const timer = setInterval(() => fetchAll(false), 30000);
       return () => clearInterval(timer);
     }
+  }, [user, fetchAll]);
+
+  useEffect(() => {
+    if (user?.role !== 'truckUser') return;
+    const socket = io(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000'}/tracking`, {
+      withCredentials: true, transports: ['websocket', 'polling'],
+    });
+    ['trip:assigned', 'trip:started', 'trip:completed', 'trip:update'].forEach((event) => socket.on(event, () => fetchAll(false)));
+    return () => { socket.disconnect(); };
   }, [user, fetchAll]);
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -336,7 +345,7 @@ export default function TruckPanel() {
 
   // Stop GPS when trip ends
   useEffect(() => {
-    if (!activeTrip && gpsStatus === 'active') stopGps();
+    if (activeTrip?.status !== 'IN_PROGRESS' && gpsStatus === 'active') stopGps();
   }, [activeTrip, gpsStatus, stopGps]);
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -360,26 +369,27 @@ export default function TruckPanel() {
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Existing handlers (preserved)
-  async function handleStartTrip(e: React.FormEvent) {
-    e.preventDefault(); setSaving(true); setError('');
+  async function handleStartTrip() {
+    if (activeTrip?.status !== 'ASSIGNED' || saving) return;
+    setSaving(true); setError('');
     try {
-      await apiFetch('/api/truck/start-trip', { method: 'POST', body: JSON.stringify(tripForm) });
+      await apiFetch('/api/truck/start-trip', { method: 'POST' });
       setSuccess('Trip started successfully!');
-      setShowStartTrip(false);
-      setTripForm({ origin: '', destination: '', cargo_type: '', notes: '' });
-      fetchAll();
+      await fetchAll();
     } catch (e: any) { setError(e.message); }
     finally { setSaving(false); }
   }
 
-  async function handleEndTrip() {
-    if (!activeTrip || !confirm('End current trip?')) return;
+  async function handleCompleteTrip() {
+    if (!activeTrip || activeTrip.status !== 'IN_PROGRESS' || saving) return;
     setSaving(true);
+    setError('');
     try {
-      await apiFetch(`/api/truck/end-trip/${activeTrip.id}`, { method: 'POST' });
-      setSuccess('Trip ended. Safe arrival!');
+      await apiFetch(`/api/truck/trips/${activeTrip.id}/complete`, { method: 'PATCH' });
+      setSuccess('Trip marked completed. Safe arrival!');
+      setShowCompleteConfirm(false);
       stopGps();
-      fetchAll();
+      await fetchAll();
     } catch (e: any) { setError(e.message); }
     finally { setSaving(false); }
   }
@@ -526,9 +536,12 @@ export default function TruckPanel() {
           {/* ── 2. ACTIVE TRIP / START TRIP ─────────────────────────────── */}
           {activeTrip ? (
             <div className="card" style={{ border: '1px solid var(--status-on-trip)', background: '#D8E5F210' }}>
-              <div className="flex items-center gap-2 mb-4">
-                <span className="w-2.5 h-2.5 rounded-full animate-pulse" style={{ background: 'var(--status-on-trip)' }} />
-                <p className="text-sm font-semibold" style={{ color: 'var(--status-on-trip)' }}>Active Trip</p>
+              <div className="flex items-center justify-between gap-2 mb-4">
+                <div className="flex items-center gap-2">
+                  <span className={`w-2.5 h-2.5 rounded-full ${activeTrip.status === 'IN_PROGRESS' ? 'animate-pulse' : ''}`} style={{ background: activeTrip.status === 'IN_PROGRESS' ? 'var(--status-on-trip)' : 'var(--color-gold)' }} />
+                  <p className="text-sm font-semibold" style={{ color: 'var(--color-ink)' }}>{activeTrip.status === 'ASSIGNED' ? 'Assigned Trip' : 'Current Trip'}</p>
+                </div>
+                <span className="text-[10px] font-bold px-2 py-1 rounded bg-blue-50 text-blue-800">{activeTrip.status?.replace('_', ' ')}</span>
               </div>
 
               {/* Origin → Destination */}
@@ -545,14 +558,17 @@ export default function TruckPanel() {
               </div>
 
               <div className="space-y-2 text-sm mb-4">
+                <div className="flex justify-between"><span style={{ color: 'var(--color-slate)' }}>Trip ID</span><span className="font-mono text-xs">{activeTrip.id?.slice(0, 8).toUpperCase()}</span></div>
+                <div className="flex justify-between"><span style={{ color: 'var(--color-slate)' }}>Truck</span><span className="font-mono font-semibold">{activeTrip.plate_number || truck?.plate_number}</span></div>
+                <div className="flex justify-between"><span style={{ color: 'var(--color-slate)' }}>Assigned</span><span className="tabular-nums text-xs">{formatDateTime(activeTrip.assigned_at)}</span></div>
                 <div className="flex justify-between">
                   <span style={{ color: 'var(--color-slate)' }}>Cargo</span>
                   <span className="font-medium">{activeTrip.cargo_type}</span>
                 </div>
-                <div className="flex justify-between">
+                {activeTrip.started_at && <div className="flex justify-between">
                   <span style={{ color: 'var(--color-slate)' }}>Started</span>
                   <span className="tabular-nums text-xs">{formatDateTime(activeTrip.started_at)}</span>
-                </div>
+                </div>}
                 {activeTrip.notes && (
                   <div className="p-2 rounded text-xs" style={{ background: 'var(--color-ivory)', color: 'var(--color-slate)' }}>
                     {activeTrip.notes}
@@ -560,21 +576,21 @@ export default function TruckPanel() {
                 )}
               </div>
 
-              <button
+              {activeTrip.status === 'ASSIGNED' ? <button className="btn-primary w-full py-4 text-sm font-bold" onClick={handleStartTrip} disabled={saving}>
+                {saving ? 'Starting…' : 'Start Trip'}
+              </button> : <button
                 className="w-full py-4 rounded text-sm font-bold transition-colors"
                 style={{ background: 'var(--status-issue)', color: 'white' }}
-                onClick={handleEndTrip}
+                onClick={() => setShowCompleteConfirm(true)}
                 disabled={saving}
               >
-                {saving ? 'Ending Trip…' : '🏁 End Trip'}
-              </button>
+                Mark as Completed
+              </button>}
             </div>
           ) : (
             <div className="card text-center py-8">
-              <p className="text-sm mb-5" style={{ color: 'var(--color-slate)' }}>No active trip. Ready to go?</p>
-              <button className="btn-primary px-10 py-4 text-base font-semibold" onClick={() => setShowStartTrip(true)}>
-                🚀 Start Trip
-              </button>
+              <p className="text-sm font-semibold mb-1">No trip assigned</p>
+              <p className="text-xs" style={{ color: 'var(--color-slate)' }}>Your fleet manager will assign a shipment to your truck.</p>
             </div>
           )}
 
@@ -683,7 +699,7 @@ export default function TruckPanel() {
               </div>
             ) : null}
 
-            {gpsStatus === 'idle' || gpsStatus === 'no_signal' || gpsStatus === 'denied' ? (
+            {activeTrip?.status === 'IN_PROGRESS' && (gpsStatus === 'idle' || gpsStatus === 'no_signal' || gpsStatus === 'denied') ? (
               <button
                 className="w-full py-4 rounded font-semibold text-sm"
                 style={{ background: 'var(--status-available)', color: 'white' }}
@@ -692,7 +708,7 @@ export default function TruckPanel() {
               >
                 📍 Start Location Sharing
               </button>
-            ) : (
+            ) : activeTrip?.status === 'IN_PROGRESS' ? (
               <button
                 className="w-full py-3 rounded font-semibold text-sm border"
                 style={{ borderColor: 'var(--color-hairline)', color: 'var(--color-slate)' }}
@@ -700,7 +716,7 @@ export default function TruckPanel() {
               >
                 ⏹ Stop Location Sharing
               </button>
-            )}
+            ) : <p className="text-xs text-center" style={{ color: 'var(--color-slate)' }}>Start the assigned trip to enable GPS location sharing.</p>}
 
             {gpsStatus === 'acquiring' && (
               <p className="text-xs text-center mt-2" style={{ color: 'var(--color-slate)' }}>
@@ -881,48 +897,20 @@ export default function TruckPanel() {
 
       {/* ── MODALS ──────────────────────────────────────────────────────────── */}
 
-      {/* Start Trip */}
-      {showStartTrip && (
-        <Modal title="Start New Trip" onClose={() => setShowStartTrip(false)}>
-          <form onSubmit={handleStartTrip} className="space-y-4">
-            {[
-              { label: 'Origin', key: 'origin', placeholder: 'Mumbai Port Terminal 3' },
-              { label: 'Destination', key: 'destination', placeholder: 'Delhi Northern Hub' },
-              { label: 'Cargo Type', key: 'cargo_type', placeholder: 'Frozen Seafood' },
-            ].map(f => (
-              <div key={f.key} className="space-y-1">
-                <label className="block text-xs font-medium uppercase tracking-wide" style={{ color: 'var(--color-slate)' }}>
-                  {f.label} <span style={{ color: 'var(--status-issue)' }}>*</span>
-                </label>
-                <input
-                  type="text"
-                  value={tripForm[f.key as keyof typeof tripForm]}
-                  onChange={e => setTripForm(p => ({ ...p, [f.key]: e.target.value }))}
-                  placeholder={f.placeholder}
-                  required
-                  className="input-field"
-                />
-              </div>
-            ))}
-            <div className="space-y-1">
-              <label className="block text-xs font-medium uppercase tracking-wide" style={{ color: 'var(--color-slate)' }}>Notes</label>
-              <textarea
-                value={tripForm.notes}
-                onChange={e => setTripForm(p => ({ ...p, notes: e.target.value }))}
-                placeholder="Any special handling instructions…"
-                rows={3}
-                className="input-field"
-                style={{ resize: 'vertical' }}
-              />
-            </div>
+      {showCompleteConfirm && (
+        <Modal title="Complete This Trip?" onClose={() => setShowCompleteConfirm(false)}>
+          <div className="space-y-4">
+            <p className="text-sm" style={{ color: 'var(--color-slate)' }}>
+              Are you sure you have successfully delivered the shipment and want to mark this trip as completed?
+            </p>
             {error && <ErrorAlert message={error} />}
             <div className="flex gap-3">
-              <button type="submit" className="btn-primary flex-1 py-3" disabled={saving}>
-                {saving ? 'Starting…' : '🚀 Start Trip'}
+              <button type="button" className="btn-primary flex-1" disabled={saving} onClick={handleCompleteTrip}>
+                {saving ? 'Completing…' : 'Confirm Completion'}
               </button>
-              <button type="button" className="btn-ghost flex-1" onClick={() => setShowStartTrip(false)}>Cancel</button>
+              <button type="button" className="btn-ghost flex-1" disabled={saving} onClick={() => setShowCompleteConfirm(false)}>Cancel</button>
             </div>
-          </form>
+          </div>
         </Modal>
       )}
 

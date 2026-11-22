@@ -191,6 +191,8 @@ export class TrackingService {
         tr.origin,
         tr.destination,
         tr.cargo_type,
+        tr.status AS trip_status,
+        tr.assigned_at,
         tr.started_at AS trip_started_at,
         tl.latitude,
         tl.longitude,
@@ -251,6 +253,8 @@ export class TrackingService {
             origin: row.origin,
             destination: row.destination,
             cargo_type: row.cargo_type,
+            status: row.trip_status,
+            assigned_at: row.assigned_at,
             started_at: row.trip_started_at,
           }
           : null,
@@ -495,7 +499,7 @@ export class TrackingService {
   async getFleetSummary(role: string, userId: string) {
     const trucks = await this.getLiveLocations(role, userId);
     const total = trucks.length;
-    const onTrip = trucks.filter((t: any) => Boolean(t.active_trip)).length;
+    const onTrip = trucks.filter((t: any) => t.active_trip?.status === 'IN_PROGRESS').length;
     const available = trucks.filter((t: any) => t.status === 'available' && !t.active_trip).length;
     const maintenance = trucks.filter((t: any) => t.status === 'maintenance').length;
     const gpsLive = trucks.filter((t: any) => t.gps_status === 'live').length;
