@@ -1,0 +1,53 @@
+{
+  "test_suite": "Cold Chain Excursion Benchmark Suite",
+  "cargo_type": "Pharma / mRNA Vaccines (2°C - 8°C Requirement)",
+  "test_scenarios": [
+    {
+      "scenario_id": "EXCURSION-DOOR-AJAR",
+      "description": "Refrigeration truck door left open during checkpoint inspection",
+      "duration_minutes": 15,
+      "peak_temperature": 11.8,
+      "severity": "CRITICAL",
+      "sample_events": [
+        {
+          "offset_sec": 0,
+          "temperature": 4.5,
+          "humidity": 60.0,
+          "door_state": "CLOSED",
+          "alert_flag": false
+        },
+        {
+          "offset_sec": 60,
+          "temperature": 6.8,
+          "humidity": 71.2,
+          "door_state": "OPEN",
+          "alert_flag": false
+        },
+        {
+          "offset_sec": 180,
+          "temperature": 8.4,
+          "humidity": 78.5,
+          "door_state": "OPEN",
+          "alert_flag": true,
+          "alert_type": "TEMP_ABOVE_THRESHOLD"
+        },
+        {
+          "offset_sec": 300,
+          "temperature": 11.8,
+          "humidity": 84.1,
+          "door_state": "OPEN",
+          "alert_flag": true,
+          "alert_type": "CRITICAL_SPOILAGE_RISK"
+        }
+      ]
+    },
+    {
+      "scenario_id": "COMPRESSOR-POWER-FAILURE",
+      "description": "Auxiliary cooling unit cut-off during transit",
+      "duration_minutes": 45,
+      "peak_temperature": 16.4,
+      "severity": "EMERGENCY",
+      "recommended_action": "Reroute to nearest cold-storage replenishment hub"
+    }
+  ]
+}
