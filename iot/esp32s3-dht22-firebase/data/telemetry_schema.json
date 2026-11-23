@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ColdChainTelemetryPayload",
+  "type": "object",
+  "required": [
+    "device_id",
+    "timestamp",
+    "temperature",
+    "humidity"
+  ],
+  "properties": {
+    "device_id": {
+      "type": "string",
+      "description": "Unique identifier of the IoT sensor node (e.g. MAC or assigned ID)"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp of measurement"
+    },
+    "temperature": {
+      "type": "number",
+      "minimum": -40.0,
+      "maximum": 80.0,
+      "description": "Ambient temperature measured in Celsius"
+    },
+    "humidity": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 100.0,
+      "description": "Relative humidity percentage"
+    },
+    "heat_index": {
+      "type": "number",
+      "description": "Calculated apparent temperature in Celsius"
+    },
+    "rssi": {
+      "type": "integer",
+      "description": "Wi-Fi signal strength in dBm"
+    },
+    "free_heap": {
+      "type": "integer",
+      "description": "Available internal RAM in bytes"
+    },
+    "uptime_sec": {
+      "type": "integer",
+      "description": "Uptime of the microcontroller in seconds"
+    }
+  },
+  "additionalProperties": true
+}
