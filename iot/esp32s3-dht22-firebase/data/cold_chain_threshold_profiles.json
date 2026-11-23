@@ -1,0 +1,45 @@
+{
+  "compliance_standard": "WHO PQS / FDA 21 CFR Part 11 Cold Chain Guidelines",
+  "cargo_categories": [
+    {
+      "category_code": "VACCINE-STANDARD",
+      "display_name": "Standard Vaccines (WHO EPI)",
+      "target_temp_min_c": 2.0,
+      "target_temp_max_c": 8.0,
+      "critical_high_c": 10.0,
+      "critical_low_c": 0.0,
+      "max_excursion_duration_mins": 30,
+      "target_humidity_max_rh": 70.0
+    },
+    {
+      "category_code": "INSULIN-BIOLOGICS",
+      "display_name": "Insulin & Monoclonal Antibodies",
+      "target_temp_min_c": 2.0,
+      "target_temp_max_c": 8.0,
+      "critical_high_c": 12.0,
+      "critical_low_c": 1.0,
+      "max_excursion_duration_mins": 45,
+      "target_humidity_max_rh": 65.0
+    },
+    {
+      "category_code": "FRESH-PRODUCE-DAIRY",
+      "display_name": "Dairy, Cheese & Pasteurized Milk",
+      "target_temp_min_c": 1.0,
+      "target_temp_max_c": 4.0,
+      "critical_high_c": 7.0,
+      "critical_low_c": -0.5,
+      "max_excursion_duration_mins": 60,
+      "target_humidity_max_rh": 85.0
+    },
+    {
+      "category_code": "FROZEN-SEAFOOD-MEAT",
+      "display_name": "Deep Frozen Meat & Seafood",
+      "target_temp_min_c": -25.0,
+      "target_temp_max_c": -18.0,
+      "critical_high_c": -12.0,
+      "critical_low_c": -35.0,
+      "max_excursion_duration_mins": 120,
+      "target_humidity_max_rh": 90.0
+    }
+  ]
+}
