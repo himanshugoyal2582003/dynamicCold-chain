@@ -629,7 +629,21 @@ esp32s3-dht22-firebase/
 
 ---
 
-## 20. License
+## 20. Datasets & Testing Resources
+
+This module includes synthetic test datasets, schemas, and simulation tools:
+
+- **Telemetry JSON Schema**: [`data/telemetry_schema.json`](data/telemetry_schema.json)
+- **Sample Telemetry Stream**: [`data/sample_telemetry_stream.json`](data/sample_telemetry_stream.json)
+- **Temperature Breach Test Cases**: [`data/transit_temperature_breach_cases.json`](data/transit_temperature_breach_cases.json)
+- **Regulatory Threshold Profiles**: [`data/cold_chain_threshold_profiles.json`](data/cold_chain_threshold_profiles.json)
+- **Sensor Calibration Benchmarks**: [`data/sensor_calibration_benchmarks.json`](data/sensor_calibration_benchmarks.json)
+- **ESP32-S3 Device Simulator CLI**: [`bridge/simulate_device.py`](bridge/simulate_device.py)
+- **Diagnostics & Troubleshooting Guide**: [`docs/TROUBLESHOOTING_GUIDE.md`](docs/TROUBLESHOOTING_GUIDE.md)
+
+---
+
+## 21. License
 
 This project is intended for educational and development purposes.
 
