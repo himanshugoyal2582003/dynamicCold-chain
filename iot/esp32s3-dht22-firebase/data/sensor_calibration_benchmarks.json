@@ -1,0 +1,66 @@
+{
+  "calibration_report": {
+    "device_model": "DHT22 / AM2302",
+    "reference_standard": "Fluke 1524 Reference Thermometer",
+    "calibration_date": "2026-11-20",
+    "laboratory": "Cold Chain IoT Calibration Lab",
+    "temperature_points": [
+      {
+        "setpoint_celsius": -20.0,
+        "measured_celsius": -19.7,
+        "offset_error": 0.3,
+        "uncertainty": 0.2,
+        "status": "PASS"
+      },
+      {
+        "setpoint_celsius": 0.0,
+        "measured_celsius": 0.1,
+        "offset_error": 0.1,
+        "uncertainty": 0.15,
+        "status": "PASS"
+      },
+      {
+        "setpoint_celsius": 4.0,
+        "measured_celsius": 4.05,
+        "offset_error": 0.05,
+        "uncertainty": 0.1,
+        "status": "PASS"
+      },
+      {
+        "setpoint_celsius": 8.0,
+        "measured_celsius": 8.12,
+        "offset_error": 0.12,
+        "uncertainty": 0.12,
+        "status": "PASS"
+      },
+      {
+        "setpoint_celsius": 25.0,
+        "measured_celsius": 24.9,
+        "offset_error": -0.1,
+        "uncertainty": 0.1,
+        "status": "PASS"
+      }
+    ],
+    "humidity_points": [
+      {
+        "setpoint_rh_pct": 20.0,
+        "measured_rh_pct": 21.4,
+        "offset_error": 1.4,
+        "status": "PASS"
+      },
+      {
+        "setpoint_rh_pct": 50.0,
+        "measured_rh_pct": 50.8,
+        "offset_error": 0.8,
+        "status": "PASS"
+      },
+      {
+        "setpoint_rh_pct": 85.0,
+        "measured_rh_pct": 84.1,
+        "offset_error": -0.9,
+        "status": "PASS"
+      }
+    ],
+    "thermal_time_constant_tau_seconds": 4.2
+  }
+}
