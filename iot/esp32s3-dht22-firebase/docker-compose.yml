@@ -1,0 +1,25 @@
+services:
+  mqtt-broker:
+    image: eclipse-mosquitto:2.0
+    container_name: coldchain-mqtt-broker
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    environment:
+      - MOSQUITTO_ALLOW_ANONYMOUS=true
+
+  bridge:
+    build:
+      context: ./bridge
+      dockerfile: Dockerfile
+    container_name: coldchain-firebase-bridge
+    restart: unless-stopped
+    depends_on:
+      - mqtt-broker
+    environment:
+      - MQTT_HOST=mqtt-broker
+      - MQTT_PORT=1883
+      - MQTT_TOPIC=esp32s3/dht22/data
+      - REQUEST_TIMEOUT=10
+    env_file:
+      - ./bridge/.env
