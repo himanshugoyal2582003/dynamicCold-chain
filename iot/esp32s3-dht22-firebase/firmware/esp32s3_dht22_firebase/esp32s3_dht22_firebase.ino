@@ -151,7 +151,7 @@ void reconnectMQTT() {
 String createJSON(float temperature,
                   float humidity) {
 
-    char json[200];
+    char json[256];
 
     snprintf(
         json,
@@ -160,10 +160,14 @@ String createJSON(float temperature,
         "{\"device\":\"esp32s3-dht22\","
         "\"temperature\":%.2f,"
         "\"humidity\":%.2f,"
+        "\"rssi\":%d,"
+        "\"free_heap\":%u,"
         "\"uptime_ms\":%lu}",
 
         temperature,
         humidity,
+        WiFi.RSSI(),
+        ESP.getFreeHeap(),
         (unsigned long)millis()
     );
 
