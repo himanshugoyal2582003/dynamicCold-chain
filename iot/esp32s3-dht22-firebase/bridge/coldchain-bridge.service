@@ -1,0 +1,18 @@
+[Unit]
+Description=Dynamic Cold Chain MQTT to Firebase Gateway Bridge
+After=network.target mosquitto.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/opt/coldchain/bridge
+ExecStart=/usr/bin/python3 /opt/coldchain/bridge/mqtt_to_firebase.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+EnvironmentFile=/opt/coldchain/bridge/.env
+
+[Install]
+WantedBy=multi-user.target
