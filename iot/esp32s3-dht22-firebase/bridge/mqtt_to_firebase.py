@@ -45,6 +45,19 @@ REQUEST_TIMEOUT = float(
     os.getenv("REQUEST_TIMEOUT", "10")
 )
 
+# Optional excursion thresholds for cold chain safety monitoring
+ALERT_MIN_TEMP = float(os.getenv("ALERT_MIN_TEMP", "2.0"))
+ALERT_MAX_TEMP = float(os.getenv("ALERT_MAX_TEMP", "8.0"))
+
+# Bridge runtime operational metrics
+BRIDGE_METRICS = {
+    "received": 0,
+    "forwarded": 0,
+    "validation_errors": 0,
+    "firebase_errors": 0,
+    "excursions_detected": 0
+}
+
 
 # ==========================================
 # 2. LOGGING CONFIGURATION
@@ -187,6 +200,16 @@ def validate_sensor_data(data):
     data["temperature"] = temperature
 
     data["humidity"] = humidity
+
+    # Cold chain excursion check
+    is_excursion = (temperature < ALERT_MIN_TEMP) or (temperature > ALERT_MAX_TEMP)
+    data["excursion"] = is_excursion
+    if is_excursion:
+        BRIDGE_METRICS["excursions_detected"] += 1
+        logger.warning(
+            "Cold chain temperature breach detected: %.2f C (Safe range: %.1f C - %.1f C)",
+            temperature, ALERT_MIN_TEMP, ALERT_MAX_TEMP
+        )
 
     data.setdefault(
         "device", "esp32s3-dht22"
