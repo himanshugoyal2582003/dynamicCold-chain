@@ -1,0 +1,44 @@
+name: IoT Bridge CI
+
+on:
+  push:
+    paths:
+      - 'iot/**'
+      - '.github/workflows/iot-ci.yml'
+  pull_request:
+    paths:
+      - 'iot/**'
+
+jobs:
+  lint-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8
+          if [ -f iot/esp32s3-dht22-firebase/bridge/requirements.txt ]; then
+            pip install -r iot/esp32s3-dht22-firebase/bridge/requirements.txt
+          fi
+
+      - name: Syntax Check Python Scripts
+        run: |
+          python -m py_compile iot/esp32s3-dht22-firebase/bridge/mqtt_to_firebase.py
+          python -m py_compile iot/esp32s3-dht22-firebase/bridge/simulate_device.py
+          python -m py_compile iot/esp32s3-dht22-firebase/bridge/healthcheck.py
+
+      - name: Validate JSON Datasets
+        run: |
+          python -m json.tool iot/esp32s3-dht22-firebase/data/sample_telemetry_stream.json > /dev/null
+          python -m json.tool iot/esp32s3-dht22-firebase/data/telemetry_schema.json > /dev/null
+          python -m json.tool iot/esp32s3-dht22-firebase/data/transit_temperature_breach_cases.json > /dev/null
+          python -m json.tool iot/esp32s3-dht22-firebase/data/cold_chain_threshold_profiles.json > /dev/null
+          python -m json.tool iot/esp32s3-dht22-firebase/data/sensor_calibration_benchmarks.json > /dev/null
