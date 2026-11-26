@@ -5,6 +5,7 @@ import { useAuth, apiFetch } from '@/lib/auth';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import DashboardLayout from '@/components/layout/DashboardLayout';
+import { openColdChainPdfReport } from '@/lib/pdf-report';
 import {
   StatusBadge,
   Spinner,
@@ -682,10 +683,18 @@ export default function OwnerDashboard() {
                   onChange={e => setSearch(e.target.value)}
                 />
                 <button
-                  onClick={() => window.print()}
+                  onClick={() =>
+                    openColdChainPdfReport({
+                      title: `Company Fleet & Insurance Report — ${user?.name || 'Fleet Owner'}`,
+                      subtitle: `Covers ${filteredTrucks.length} truck(s) and ${lstmLogs.length} 1-minute LSTM records.`,
+                      trucks: filteredTrucks.map((t) => ({ ...t, owner_name: user?.name })),
+                      logs: lstmLogs,
+                      groupByCompany: false,
+                    })
+                  }
                   className="btn-primary text-xs whitespace-nowrap"
                 >
-                  🖨️ Print / Export PDF
+                  🖨️ Company Fleet PDF
                 </button>
               </div>
             </div>
@@ -809,6 +818,20 @@ export default function OwnerDashboard() {
                                     <span>Recalculate AI</span>
                                   </>
                                 )}
+                              </button>
+                              <button
+                                onClick={() =>
+                                  openColdChainPdfReport({
+                                    title: `Truck Report — ${t.plate_number}`,
+                                    subtitle: `Company: ${user?.name || 'Fleet Owner'} · ${t.type || 'Cold Reefer'}`,
+                                    trucks: [{ ...t, owner_name: user?.name }],
+                                    logs: lstmLogs.filter((l) => l.truck_id === t.id || l.plate_number === t.plate_number),
+                                    groupByCompany: false,
+                                  })
+                                }
+                                className="btn-ghost text-xs whitespace-nowrap py-1 px-2"
+                              >
+                                🖨️ Truck PDF
                               </button>
                               <Link
                                 href={`/owner/trucks/${t.id}`}

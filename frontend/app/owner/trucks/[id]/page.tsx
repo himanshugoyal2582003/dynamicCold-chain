@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth, apiFetch } from '@/lib/auth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
+import { openColdChainPdfReport } from '@/lib/pdf-report';
 import {
   StatusBadge,
   Spinner,
@@ -319,8 +320,19 @@ export default function TruckDetail() {
               <span>Back to Fleet Overview</span>
             </button>
             <div className="flex items-center gap-3">
-              <button onClick={() => window.print()} className="no-print btn-primary text-xs">
-                🖨️ Print / Export PDF
+              <button
+                onClick={() =>
+                  openColdChainPdfReport({
+                    title: `Truck LSTM Report — ${truck.plate_number}`,
+                    subtitle: `Company: ${user?.name || 'Fleet Owner'} · ${truck.type || 'Cold Reefer'}`,
+                    trucks: [{ ...truck, owner_name: user?.name }],
+                    logs: telemetryHistory.map((r) => ({ ...r, plate_number: truck.plate_number })),
+                    groupByCompany: false,
+                  })
+                }
+                className="no-print btn-primary text-xs"
+              >
+                🖨️ Truck PDF Report
               </button>
               <span className="text-xs text-gray-400">Status:</span>
               <StatusBadge status={truck.status} />

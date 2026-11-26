@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useAuth, apiFetch } from '@/lib/auth';
 import { useRouter } from 'next/navigation';
 import DashboardLayout from '@/components/layout/DashboardLayout';
+import { openColdChainPdfReport } from '@/lib/pdf-report';
 import {
   Spinner,
   EmptyState,
@@ -112,6 +113,48 @@ export default function AdminInsurancePage() {
     ? (trucks.reduce((s, t) => s + (Number(t.current_insurance_price) || 450), 0) / trucks.length).toFixed(2)
     : '450.00';
 
+  const companiesMap = new Map<string, any[]>();
+  for (const t of trucks) {
+    const companyName = t.owner_name || 'Unassigned Company';
+    if (!companiesMap.has(companyName)) companiesMap.set(companyName, []);
+    companiesMap.get(companyName)!.push(t);
+  }
+  const companiesList = Array.from(companiesMap.entries());
+
+  function printAllCompaniesPdf() {
+    openColdChainPdfReport({
+      title: 'All Companies & Every Truck — LSTM Insurance & Spoilage Report',
+      subtitle: `Covers ${companiesList.length} companies and ${trucks.length} trucks with 1-minute Neon DB LSTM logs.`,
+      trucks,
+      logs,
+      groupByCompany: true,
+    });
+  }
+
+  function printCompanyPdf(companyName: string, companyTrucks: any[]) {
+    const companyLogs = logs.filter((l) =>
+      companyTrucks.some((t) => t.id === l.truck_id || t.plate_number === l.plate_number),
+    );
+    openColdChainPdfReport({
+      title: `Company Fleet Report — ${companyName}`,
+      subtitle: `${companyTrucks.length} truck(s) · 1-minute SpoilageLSTM & InsuranceLSTM audit`,
+      trucks: companyTrucks,
+      logs: companyLogs,
+      groupByCompany: false,
+    });
+  }
+
+  function printTruckPdf(truck: any) {
+    const truckLogs = logs.filter((l) => l.truck_id === truck.id || l.plate_number === truck.plate_number);
+    openColdChainPdfReport({
+      title: `Truck Report — ${truck.plate_number}`,
+      subtitle: `Company: ${truck.owner_name || '—'} · ${truck.type || 'Cold Reefer'}`,
+      trucks: [truck],
+      logs: truckLogs,
+      groupByCompany: false,
+    });
+  }
+
   return (
     <DashboardLayout navItems={NAV} title="LSTM Insurance & Spoilage Pipeline" roleLabel="Administrator">
       <div className="space-y-6">
@@ -131,8 +174,8 @@ export default function AdminInsurancePage() {
             <button onClick={fetchAll} className="btn-ghost text-xs">
               Refresh
             </button>
-            <button onClick={() => window.print()} className="btn-primary text-xs">
-              🖨️ Print / Export PDF
+            <button onClick={printAllCompaniesPdf} className="btn-primary text-xs">
+              🖨️ All Companies & Trucks PDF
             </button>
           </div>
         </div>
@@ -155,6 +198,32 @@ export default function AdminInsurancePage() {
             <p className="text-xs uppercase tracking-wide mt-1" style={{ color: 'var(--color-slate)' }}>1-Min LSTM Logs (Neon DB)</p>
           </div>
         </div>
+
+        {/* Per-Company PDF Export Cards */}
+        {companiesList.length > 0 && (
+          <div className="no-print card p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold">Generate PDF Report by Company</h2>
+              <span className="text-xs" style={{ color: 'var(--color-slate)' }}>{companiesList.length} companies</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {companiesList.map(([companyName, companyTrucks]) => (
+                <div key={companyName} className="p-3 rounded border flex items-center justify-between gap-2" style={{ borderColor: 'var(--color-hairline)', background: 'var(--color-ivory)' }}>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold truncate">{companyName}</p>
+                    <p className="text-xs" style={{ color: 'var(--color-slate)' }}>{companyTrucks.length} truck(s)</p>
+                  </div>
+                  <button
+                    onClick={() => printCompanyPdf(companyName, companyTrucks)}
+                    className="btn-ghost text-xs whitespace-nowrap"
+                  >
+                    🖨️ Company PDF
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Truck Base & LSTM Predicted Insurance Table */}
         <div className="card p-0 overflow-x-auto">
@@ -215,6 +284,12 @@ export default function AdminInsurancePage() {
                             onClick={() => handleRecalculate(t.id, t.plate_number)}
                           >
                             {recalcId === t.id ? 'Running…' : 'Run LSTM'}
+                          </button>
+                          <button
+                            className="btn-ghost text-xs whitespace-nowrap"
+                            onClick={() => printTruckPdf(t)}
+                          >
+                            🖨️ Truck PDF
                           </button>
                         </div>
                       </td>
