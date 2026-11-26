@@ -1,6 +1,6 @@
 import {
-  Controller, Get, Post, Patch, Body, Param, Req, Query, Logger,
-  ForbiddenException, UnauthorizedException, BadRequestException,
+  Controller, Get, Post, Patch, Delete, Body, Param, Req, UseGuards,
+  ForbiddenException, UnauthorizedException,
 } from '@nestjs/common';
 import { Request } from 'express';
 import { AdminService } from './admin.service';
@@ -47,6 +47,14 @@ export class AdminController {
     assertAdmin(req);
     const result = await this.adminService.deactivateOwner(id);
     await this.adminService.logActivity(req.user!.sub, 'DEACTIVATE_OWNER', 'USER', id, {});
+    return result;
+  }
+
+  @Delete('owners/:id')
+  async deleteOwner(@Req() req: Request, @Param('id') id: string) {
+    assertAdmin(req);
+    const result = await this.adminService.deleteOwner(id);
+    await this.adminService.logActivity(req.user!.sub, 'DELETE_OWNER', 'USER', id, {});
     return result;
   }
 
@@ -103,6 +111,14 @@ export class AdminController {
     return result;
   }
 
+  @Delete('trucks/:id')
+  async deleteTruck(@Req() req: Request, @Param('id') id: string) {
+    assertAdmin(req);
+    const result = await this.adminService.deleteTruck(id);
+    await this.adminService.logActivity(req.user!.sub, 'DELETE_TRUCK', 'TRUCK', id, {});
+    return result;
+  }
+
   // ─── TRUCK USERS ──────────────────────────────────────────────────────────
   @Get('users')
   async listUsers(@Req() req: Request) {
@@ -127,10 +143,25 @@ export class AdminController {
     return result;
   }
 
+  @Delete('users/:id')
+  async deleteUser(@Req() req: Request, @Param('id') id: string) {
+    assertAdmin(req);
+    const result = await this.adminService.deleteTruckUser(id);
+    await this.adminService.logActivity(req.user!.sub, 'DELETE_DRIVER', 'USER', id, {});
+    return result;
+  }
+
   // ─── ACTIVITY LOG ─────────────────────────────────────────────────────────
   @Get('activity-log')
   async getActivityLog(@Req() req: Request) {
     assertAdmin(req);
     return this.adminService.getActivityLog(100);
+  }
+
+  // ─── LSTM SPOILAGE & INSURANCE LOGS ───────────────────────────────────────
+  @Get('lstm-logs')
+  async getLstmLogs(@Req() req: Request) {
+    assertAdmin(req);
+    return this.adminService.getLstmLogs(200);
   }
 }

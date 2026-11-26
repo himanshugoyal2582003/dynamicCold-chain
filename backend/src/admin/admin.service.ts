@@ -1,4 +1,4 @@
-import { Injectable, Logger, ForbiddenException, BadRequestException, ConflictException } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { NeonService } from '../neon/neon.service';
 
 @Injectable()
@@ -42,37 +42,49 @@ export class AdminService {
   }
 
   async createOwner(name: string, email: string, password: string) {
-    const normalizedName = typeof name === 'string' ? name.trim() : '';
-    const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
-    if (!normalizedName || normalizedName.length > 100) {
-      throw new BadRequestException('Owner name is required and must be at most 100 characters.');
+    if (!name?.trim() || !email?.trim() || !password) {
+      throw new BadRequestException('Name, email, and password are required.');
     }
-    if (normalizedEmail.length > 150 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
-      throw new BadRequestException('A valid owner email address is required.');
-    }
-    if (typeof password !== 'string' || password.length < 8 || password.length > 72) {
-      throw new BadRequestException('Password must be between 8 and 72 characters.');
+    const cleanEmail = email.toLowerCase().trim();
+    const existing = await this.sql(`SELECT id FROM users WHERE email = $1 LIMIT 1`, [cleanEmail]);
+    if (existing.length > 0) {
+      throw new BadRequestException('An account with this email address already exists.');
     }
     const bcrypt = await import('bcryptjs');
     const hash = await bcrypt.hash(password, 10);
-    try {
-      const rows = await this.sql(
-        `INSERT INTO users (name, email, password_hash, role, active)
-         VALUES ($1, $2, $3, 'owner', true)
-         RETURNING id, name, email, role, active, created_at`,
-        [normalizedName, normalizedEmail, hash],
-      );
-      if (!rows[0]) throw new Error('Owner insert completed without returning the saved record.');
-      this.logger.log('[DB] Owner INSERT successful');
-      return rows[0];
-    } catch (error: any) {
-      if (error?.code === '23505') throw new ConflictException('A user with this email address is already registered.');
-      throw error;
-    }
+    const rows = await this.sql(
+      `INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, 'owner') RETURNING id, name, email, role, created_at`,
+      [name.trim(), cleanEmail, hash],
+    );
+    return rows[0];
   }
 
   async deactivateOwner(id: string) {
-    await this.sql(`UPDATE users SET active = false WHERE id = $1 AND role = 'owner'`, [id]);
+    await this.deleteOwner(id);
+    return { success: true };
+  }
+
+  async deleteOwner(id: string) {
+    await this.sql(`
+      WITH target_owner AS (
+        UPDATE users SET active = false
+        WHERE id = $1 AND role = 'owner' AND active = true
+        RETURNING id
+      ), disabled_drivers AS (
+        UPDATE users SET active = false, truck_id = NULL
+        WHERE owner_id IN (SELECT id FROM target_owner) AND role = 'truckUser'
+        RETURNING id
+      ), disabled_trucks AS (
+        UPDATE trucks SET active = false, iot_connection_number = NULL
+        WHERE owner_id IN (SELECT id FROM target_owner)
+        RETURNING id
+      ), ended_trips AS (
+        UPDATE trips SET ended_at = NOW()
+        WHERE truck_id IN (SELECT id FROM disabled_trucks) AND ended_at IS NULL
+        RETURNING id
+      )
+      SELECT id FROM target_owner;
+    `, [id]);
     return { success: true };
   }
 
@@ -185,78 +197,70 @@ export class AdminService {
 
   async createTruck(data: {
     owner_id: string; plate_number: string; type: string;
-    capacity_tons: number; target_temp_c?: number;
+    capacity_tons: number; target_temp_c?: number; base_insurance_price?: number;
     insurance_expiry?: string; permit_expiry?: string; fitness_expiry?: string;
   }) {
-    const ownerId = typeof data?.owner_id === 'string' ? data.owner_id.trim() : '';
-    const plateNumber = typeof data?.plate_number === 'string' ? data.plate_number.trim().toUpperCase() : '';
-    const type = typeof data?.type === 'string' ? data.type.trim() : '';
-    const capacity = Number(data?.capacity_tons);
-    const targetTemp = data?.target_temp_c === undefined ? 4 : Number(data.target_temp_c);
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ownerId)) {
-      throw new BadRequestException('Select a valid owner.');
+    if (!data.owner_id || !data.plate_number?.trim()) {
+      throw new BadRequestException('Owner and plate number are required.');
     }
-    if (!plateNumber || plateNumber.length > 50) throw new BadRequestException('A valid truck registration number is required (up to 50 characters).');
-    if (!type || type.length > 50) throw new BadRequestException('A valid truck type is required (up to 50 characters).');
-    if (!Number.isFinite(capacity) || capacity <= 0 || capacity > 999.99) throw new BadRequestException('Capacity must be a number greater than 0 and no more than 999.99 tons.');
-    if (!Number.isFinite(targetTemp) || targetTemp < -30 || targetTemp > 25) throw new BadRequestException('Target temperature must be between -30°C and 25°C.');
-
-    const validDate = (value?: string) => {
-      if (!value) return true;
-      if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-      const parsed = new Date(`${value}T00:00:00.000Z`);
-      return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
-    };
-    for (const [field, value] of [
-      ['Insurance expiry', data.insurance_expiry],
-      ['Permit expiry', data.permit_expiry],
-      ['Fitness expiry', data.fitness_expiry],
-    ] as const) {
-      if (!validDate(value)) throw new BadRequestException(`${field} must be a valid date.`);
+    const plate = data.plate_number.trim().toUpperCase();
+    const existing = await this.sql(`SELECT id FROM trucks WHERE UPPER(plate_number) = $1 LIMIT 1`, [plate]);
+    if (existing.length > 0) {
+      throw new BadRequestException('A truck with this plate number already exists.');
     }
-
-    try {
-      // INSERT ... SELECT makes active-owner validation and truck creation atomic.
-      const rows = await this.sql(
-        `INSERT INTO trucks (owner_id, plate_number, type, capacity_tons, target_temp_c, insurance_expiry, permit_expiry, fitness_expiry, status, active)
-         SELECT owner.id, $2, $3, CAST($4 AS NUMERIC), CAST($5 AS NUMERIC),
-                CAST($6 AS DATE), CAST($7 AS DATE), CAST($8 AS DATE), 'available', true
-         FROM users owner
-         WHERE owner.id = $1 AND owner.role = 'owner' AND owner.active = true
-         RETURNING *`,
-        [ownerId, plateNumber, type, capacity, targetTemp, data.insurance_expiry || null, data.permit_expiry || null, data.fitness_expiry || null],
-      );
-      if (!rows.length) throw new BadRequestException('Selected owner does not exist or is inactive.');
-      this.logger.log('[DB] Truck INSERT successful');
-      return rows[0];
-    } catch (error: any) {
-      if (error instanceof BadRequestException) throw error;
-      if (error?.code === '23505') throw new ConflictException('A truck with this registration number already exists.');
-      throw error;
-    }
+    const basePrice = data.base_insurance_price ?? 450.0;
+    const rows = await this.sql(
+      `INSERT INTO trucks (owner_id, plate_number, type, capacity_tons, target_temp_c, base_insurance_price, current_insurance_price, insurance_expiry, permit_expiry, fitness_expiry)
+       VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $8, $9) RETURNING *`,
+      [
+        data.owner_id, plate, data.type || 'Refrigerated Semi 10T', data.capacity_tons ?? 10.0,
+        data.target_temp_c ?? 4.0, basePrice, data.insurance_expiry || null,
+        data.permit_expiry || null, data.fitness_expiry || null,
+      ],
+    );
+    return rows[0];
   }
 
   async updateTruck(id: string, data: Partial<{
     plate_number: string; type: string; capacity_tons: number;
-    status: string; target_temp_c: number; insurance_expiry: string;
-    permit_expiry: string; fitness_expiry: string;
+    status: string; target_temp_c: number; base_insurance_price: number;
+    insurance_expiry: string; permit_expiry: string; fitness_expiry: string;
+    iot_connection_number: string | null;
   }>) {
-    const allowedFields = [
-      'plate_number', 'type', 'capacity_tons', 'status', 'target_temp_c',
-      'insurance_expiry', 'permit_expiry', 'fitness_expiry',
-    ] as const;
-    const entries = allowedFields
-      .filter((field) => data[field] !== undefined)
-      .map((field) => [field, data[field]] as const);
-    const fields = entries.map(([field], index) => `${field} = $${index + 2}`).join(', ');
-    const values = entries.map(([, value]) => value);
-    if (!fields) return null;
+    const allowedFields = new Set([
+      'plate_number', 'type', 'capacity_tons', 'status',
+      'target_temp_c', 'base_insurance_price',
+      'insurance_expiry', 'permit_expiry', 'fitness_expiry', 'iot_connection_number',
+    ]);
+    const entries = Object.entries(data).filter(([k, v]) => allowedFields.has(k) && v !== undefined);
+    if (!entries.length) return null;
+    const fields = entries.map(([k], i) => `${k} = $${i + 2}`).join(', ');
+    const values = entries.map(([, v]) => v);
     const rows = await this.sql(`UPDATE trucks SET ${fields} WHERE id = $1 RETURNING *`, [id, ...values]);
     return rows[0];
   }
 
   async deactivateTruck(id: string) {
-    await this.sql(`UPDATE trucks SET active = false WHERE id = $1`, [id]);
+    await this.deleteTruck(id);
+    return { success: true };
+  }
+
+  async deleteTruck(id: string) {
+    await this.sql(`
+      WITH target_truck AS (
+        UPDATE trucks SET active = false, iot_connection_number = NULL
+        WHERE id = $1 AND active = true
+        RETURNING id
+      ), unassigned_drivers AS (
+        UPDATE users SET truck_id = NULL WHERE truck_id IN (SELECT id FROM target_truck)
+        RETURNING id
+      ), ended_trips AS (
+        UPDATE trips SET ended_at = NOW()
+        WHERE truck_id IN (SELECT id FROM target_truck) AND ended_at IS NULL
+        RETURNING id
+      )
+      SELECT id FROM target_truck;
+    `, [id]);
     return { success: true };
   }
 
@@ -275,45 +279,33 @@ export class AdminService {
   }
 
   async createTruckUser(name: string, email: string, password: string, owner_id: string) {
-    const normalizedName = typeof name === 'string' ? name.trim() : '';
-    const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
-    const normalizedOwnerId = typeof owner_id === 'string' ? owner_id.trim() : '';
-    if (!normalizedName || normalizedName.length > 100) {
-      throw new BadRequestException('Full name is required and must be at most 100 characters.');
+    if (!name?.trim() || !email?.trim() || !password || !owner_id) {
+      throw new BadRequestException('Name, email, password, and owner_id are required.');
     }
-    if (normalizedEmail.length > 150 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
-      throw new BadRequestException('A valid email address is required.');
+    const cleanEmail = email.toLowerCase().trim();
+    const existing = await this.sql(`SELECT id FROM users WHERE email = $1 LIMIT 1`, [cleanEmail]);
+    if (existing.length > 0) {
+      throw new BadRequestException('An account with this email address already exists.');
     }
-    if (typeof password !== 'string' || password.length < 8 || password.length > 72) {
-      throw new BadRequestException('Password must be between 8 and 72 characters.');
-    }
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(normalizedOwnerId)) {
-      throw new BadRequestException('A valid owner ID must be selected.');
-    }
-
     const bcrypt = await import('bcryptjs');
     const hash = await bcrypt.hash(password, 10);
-    try {
-      const rows = await this.sql(
-        `INSERT INTO users (name, email, password_hash, role, owner_id, active)
-         SELECT $1, $2, $3, 'truckUser', owner.id, true
-         FROM users owner
-         WHERE owner.id = $4 AND owner.role = 'owner' AND owner.active = true
-         RETURNING id, name, email, role, owner_id, truck_id, active, created_at`,
-        [normalizedName, normalizedEmail, hash, normalizedOwnerId],
-      );
-      if (!rows.length) throw new BadRequestException('Selected owner does not exist or is inactive.');
-      this.logger.log('[DB] Driver INSERT successful');
-      return rows[0];
-    } catch (error: any) {
-      if (error instanceof BadRequestException) throw error;
-      if (error?.code === '23505') throw new ConflictException('A user with this email address is already registered.');
-      throw error;
-    }
+    const rows = await this.sql(
+      `INSERT INTO users (name, email, password_hash, role, owner_id) VALUES ($1, $2, $3, 'truckUser', $4) RETURNING id, name, email, role, owner_id, created_at`,
+      [name.trim(), cleanEmail, hash, owner_id],
+    );
+    return rows[0];
   }
 
   async deactivateUser(id: string) {
-    await this.sql(`UPDATE users SET active = false WHERE id = $1`, [id]);
+    await this.deleteTruckUser(id);
+    return { success: true };
+  }
+
+  async deleteTruckUser(id: string) {
+    await this.sql(`
+      UPDATE users SET active = false, truck_id = NULL
+      WHERE id = $1 AND role = 'truckUser';
+    `, [id]);
     return { success: true };
   }
 
@@ -332,6 +324,21 @@ export class AdminService {
     await this.sql(
       `INSERT INTO activity_log (actor_id, action, entity, entity_id, details) VALUES ($1, $2, $3, $4, $5)`,
       [actorId, action, entity, entityId, JSON.stringify(details)],
+    );
+  }
+
+  async getLstmLogs(limit = 200) {
+    return this.sql(
+      `SELECT h.*, t.plate_number, t.type AS truck_type,
+              t.base_insurance_price AS truck_base_price,
+              t.current_insurance_price AS truck_current_price,
+              u.name AS owner_name
+       FROM trip_telemetry_history h
+       INNER JOIN trucks t ON t.id = h.truck_id
+       LEFT JOIN users u ON u.id = t.owner_id
+       ORDER BY h.recorded_at DESC
+       LIMIT $1`,
+      [limit],
     );
   }
 }
