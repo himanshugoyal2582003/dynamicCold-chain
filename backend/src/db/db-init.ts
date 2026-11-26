@@ -47,6 +47,11 @@ async function initDb() {
       capacity_tons NUMERIC(5,2) NOT NULL,
       status VARCHAR(20) DEFAULT 'available' CHECK (status IN ('available', 'on_trip', 'maintenance')),
       target_temp_c NUMERIC(4,1) DEFAULT 4.0,
+      iot_connection_number VARCHAR(50),
+      base_insurance_price NUMERIC(8,2) DEFAULT 450.00,
+      current_insurance_price NUMERIC(8,2) DEFAULT 450.00,
+      insurance_risk_score NUMERIC(5,2) DEFAULT 15.0,
+      insurance_status VARCHAR(20) DEFAULT 'discounted',
       insurance_expiry DATE,
       permit_expiry DATE,
       fitness_expiry DATE,
@@ -83,25 +88,36 @@ async function initDb() {
     );
   `;
 
+  // Trip telemetry history table (must be created after trips and trucks)
   await sql`
     CREATE TABLE IF NOT EXISTS trip_telemetry_history (
       id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
       trip_id UUID REFERENCES trips(id) ON DELETE SET NULL,
       truck_id UUID NOT NULL REFERENCES trucks(id) ON DELETE CASCADE,
-      device_id VARCHAR(50), connection_number VARCHAR(50),
-      temperature NUMERIC(5,2) NOT NULL, target_temp NUMERIC(5,2) NOT NULL,
-      humidity NUMERIC(5,2) NOT NULL, battery NUMERIC(5,2) NOT NULL,
-      door_open BOOLEAN NOT NULL DEFAULT false,
-      gps_lat NUMERIC(9,6), gps_lng NUMERIC(9,6), speed_kmh NUMERIC(5,2),
-      spoilage_risk NUMERIC(5,2), spoilage_risk_level VARCHAR(20),
-      rsl_hours NUMERIC(6,2), quality_retention_pct NUMERIC(5,2),
+      device_id VARCHAR(50),
+      connection_number VARCHAR(50),
+      temperature NUMERIC(5,2) NOT NULL,
+      target_temp NUMERIC(5,2) NOT NULL,
+      humidity NUMERIC(5,2) NOT NULL,
+      battery NUMERIC(5,2) NOT NULL,
+      door_open BOOLEAN DEFAULT false,
+      gps_lat NUMERIC(9,6),
+      gps_lng NUMERIC(9,6),
+      speed_kmh NUMERIC(5,2),
+      spoilage_risk NUMERIC(5,2),
+      spoilage_risk_level VARCHAR(20),
+      rsl_hours NUMERIC(6,2),
+      quality_retention_pct NUMERIC(5,2),
+      good_env_rsl_hours NUMERIC(6,2),
+      bad_env_rsl_hours NUMERIC(6,2),
+      environment_condition VARCHAR(30),
+      base_insurance_price NUMERIC(8,2),
+      predicted_insurance_price NUMERIC(8,2),
+      insurance_risk_score NUMERIC(5,2),
+      model_type VARCHAR(50),
       route_recommendation TEXT,
-      recorded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
-  `;
-  await sql`
-    CREATE INDEX IF NOT EXISTS idx_telemetry_history_truck_time
-      ON trip_telemetry_history(truck_id, recorded_at DESC);
   `;
 
   // Issues table

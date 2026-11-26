@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit, NotFoundException, ServiceUnavailableException, ConflictException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { NeonService } from '../neon/neon.service';
 
 export interface EnrichedIoTTelemetry {
@@ -51,7 +51,7 @@ export class IotService implements OnModuleInit {
   constructor(private readonly neonService: NeonService) {}
 
   async onModuleInit() {
-    await this.loadPersistedBindings();
+    await this.ensureIotColumn();
   }
 
   private async loadPersistedBindings() {
@@ -159,12 +159,17 @@ export class IotService implements OnModuleInit {
   async getTelemetryHistory(truckId: string, limit: number = 30) {
     const sql = this.neonService.getSql();
     if (!sql) return [];
-    return sql`
-      SELECT * FROM trip_telemetry_history
-      WHERE truck_id = ${truckId}::uuid
-      ORDER BY recorded_at DESC
-      LIMIT ${limit};
-    `;
+    try {
+      return await sql`
+        SELECT * FROM trip_telemetry_history
+        WHERE truck_id = ${truckId}::uuid
+        ORDER BY recorded_at DESC
+        LIMIT ${limit};
+      `;
+    } catch (e: any) {
+      this.logger.warn(`Failed to fetch history for truck ${truckId}: ${e.message}`);
+      return [];
+    }
   }
 
   // Dynamic AI Insurance Pricing model calculation
@@ -177,16 +182,21 @@ export class IotService implements OnModuleInit {
     const truck = truckRows[0];
 
     // Compute metrics from telemetry history
-    const historyRows = await sql`
-      SELECT
-        COUNT(*)::int as total_points,
-        COUNT(CASE WHEN temperature > target_temp + 2.0 THEN 1 END)::int as excursions,
-        COUNT(CASE WHEN door_open = true THEN 1 END)::int as door_opens,
-        COALESCE(AVG(ABS(temperature - target_temp)), 0.3)::numeric(4,2) as avg_dev
-      FROM trip_telemetry_history
-      WHERE truck_id = ${truckId}::uuid;
-    `;
-    const hist = historyRows[0] || {};
+    let hist: any = {};
+    try {
+      const historyRows = await sql`
+        SELECT
+          COUNT(*)::int as total_points,
+          COUNT(CASE WHEN temperature > target_temp + 2.0 THEN 1 END)::int as excursions,
+          COUNT(CASE WHEN door_open = true THEN 1 END)::int as door_opens,
+          COALESCE(AVG(ABS(temperature - target_temp)), 0.3)::numeric(4,2) as avg_dev
+        FROM trip_telemetry_history
+        WHERE truck_id = ${truckId}::uuid;
+      `;
+      hist = historyRows[0] || {};
+    } catch (e: any) {
+      this.logger.warn(`Could not query telemetry history metrics: ${e.message}`);
+    }
 
     const incidentRows = await sql`
       SELECT COUNT(*)::int as count FROM issues WHERE truck_id = ${truckId}::uuid;
