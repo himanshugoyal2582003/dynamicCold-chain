@@ -51,6 +51,35 @@ interface FleetMapProps {
   className?: string;
   focusTruckId?: string | null;
   height?: string;
+  showWarehousesByDefault?: boolean;
+}
+
+interface WarehousePoint {
+  n: string;
+  la: number;
+  lo: number;
+  s: string;
+  d: string;
+}
+
+let cachedWarehouses: WarehousePoint[] | null = null;
+let warehousesPromise: Promise<WarehousePoint[]> | null = null;
+
+async function loadWarehouses(): Promise<WarehousePoint[]> {
+  if (cachedWarehouses) return cachedWarehouses;
+  if (!warehousesPromise) {
+    warehousesPromise = fetch('/data/warehouses.json')
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        cachedWarehouses = Array.isArray(data) ? data : [];
+        return cachedWarehouses;
+      })
+      .catch(() => {
+        warehousesPromise = null;
+        return [];
+      });
+  }
+  return warehousesPromise;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -135,11 +164,15 @@ export default function FleetMap({
   className = '',
   focusTruckId,
   height = '500px',
+  showWarehousesByDefault = true,
 }: FleetMapProps) {
   const mapContainerRef   = useRef<HTMLDivElement>(null);
   const mapRef            = useRef<any>(null);
   const mapReadyRef       = useRef(false);
   const [mapReady, setMapReady] = useState(false);
+  const [showWarehouses, setShowWarehouses] = useState(showWarehousesByDefault);
+  const [warehouseCount, setWarehouseCount] = useState<number>(0);
+  const warehouseLayerRef = useRef<any>(null);
   const markersRef        = useRef<Map<string, any>>(new Map());
   const trucksRef = useRef(trucks);
   const lastFitSignatureRef = useRef('');
@@ -401,6 +434,58 @@ export default function FleetMap({
   }, [mapReady, remainingCoordinates]);
 
   // ───────────────────────────────────────────────────────────────────────────
+  // 5. Cold-storage warehouses layer (Canvas-rendered for smooth 4,900+ points)
+  // ───────────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const map = mapRef.current;
+      if (!map || !mapReady) return;
+
+      if (!showWarehouses) {
+        if (warehouseLayerRef.current) {
+          warehouseLayerRef.current.remove();
+        }
+        return;
+      }
+
+      const L = (await import('leaflet')).default;
+      const warehouses = await loadWarehouses();
+      if (cancelled || !mapRef.current) return;
+
+      setWarehouseCount(warehouses.length);
+
+      if (!warehouseLayerRef.current) {
+        const renderer = L.canvas({ padding: 0.5 });
+        const group = L.layerGroup();
+        for (const w of warehouses) {
+          const marker = L.circleMarker([w.la, w.lo], {
+            renderer,
+            radius: 4,
+            color: '#0369A1',
+            fillColor: '#38BDF8',
+            fillOpacity: 0.85,
+            weight: 1,
+          });
+          marker.bindPopup(
+            `<strong>❄️ ${escapeHtml(w.n)}</strong><br/>${escapeHtml(w.d)}${w.d && w.s ? ', ' : ''}${escapeHtml(w.s)}<br/><span style="font-size:11px;color:#5B6470">${w.la.toFixed(4)}, ${w.lo.toFixed(4)}</span>`,
+          );
+          marker.addTo(group);
+        }
+        warehouseLayerRef.current = group;
+      }
+
+      if (!map.hasLayer(warehouseLayerRef.current)) {
+        warehouseLayerRef.current.addTo(map);
+      }
+    })().catch(console.error);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mapReady, showWarehouses]);
+
+  // ───────────────────────────────────────────────────────────────────────────
   // Fit all fleet trucks in view
   // ───────────────────────────────────────────────────────────────────────────
   const fitAllTrucks = useCallback(() => {
@@ -426,7 +511,7 @@ export default function FleetMap({
       <div ref={mapContainerRef} className="w-full h-full" style={{ background: '#F7F6F3' }} />
 
       {/* Floating controls — top-left */}
-      <div className="absolute top-3 left-3 z-[400] flex flex-col gap-2">
+      <div className="absolute top-3 left-3 z-[400] flex flex-wrap gap-2">
         <button
           onClick={fitAllTrucks}
           className="px-3 py-1.5 rounded shadow-sm text-xs font-medium border transition-colors flex items-center gap-1.5"
@@ -438,6 +523,18 @@ export default function FleetMap({
           title="Fit all fleet vehicles in view"
         >
           <span>🎯</span> Fit All Fleet
+        </button>
+        <button
+          onClick={() => setShowWarehouses((prev) => !prev)}
+          className="px-3 py-1.5 rounded shadow-sm text-xs font-medium border transition-colors flex items-center gap-1.5"
+          style={{
+            background: showWarehouses ? '#E0F2FE' : 'var(--color-paper)',
+            borderColor: showWarehouses ? '#0284C7' : 'var(--color-hairline)',
+            color: showWarehouses ? '#0369A1' : 'var(--color-ink)',
+          }}
+          title="Toggle India cold-storage warehouses layer"
+        >
+          <span>❄️</span> Warehouses{warehouseCount ? ` (${warehouseCount.toLocaleString()})` : ''}
         </button>
       </div>
 
@@ -462,6 +559,9 @@ export default function FleetMap({
         </span>
         <span className="flex items-center gap-1">
           <span className="w-2.5 h-2.5 rounded-full" style={{ background: '#C9962B' }} /> Maintenance
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-2.5 h-2.5 rounded-full border border-[#0369A1]" style={{ background: '#38BDF8' }} /> Warehouse
         </span>
       </div>
     </div>
