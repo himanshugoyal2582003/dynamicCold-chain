@@ -8,6 +8,8 @@ import { TruckService } from './truck.service';
 function assertTruckUser(req: Request) {
   if (!req.user) throw new UnauthorizedException('Not authenticated.');
   if (req.user.role !== 'truckUser') throw new ForbiddenException('Truck User only.');
+  // truckId is now refreshed from DB by the auth middleware on every request
+  if (!req.user.truckId) throw new ForbiddenException('No truck assigned to your account. Ask your fleet owner to assign you a truck.');
   return { userId: req.user.sub, truckId: req.user.truckId };
 }
 
