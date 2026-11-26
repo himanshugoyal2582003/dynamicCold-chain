@@ -91,6 +91,10 @@ class ProcessedIoTTelemetry(BaseModel):
     reroute_suggested: bool
     nearest_safe_market: Optional[str] = None
     alert_message: Optional[str] = None
+    good_env_rsl_hours: Optional[float] = None
+    bad_env_rsl_hours: Optional[float] = None
+    environment_condition: Optional[str] = None
+    model_type: Optional[str] = "PyTorch-SpoilageLSTM"
     timestamp: str
 
 class InsurancePricingRequest(BaseModel):
@@ -115,29 +119,6 @@ class InsurancePricingResponse(BaseModel):
     adjustment_amount: float
     recommendation: str
     pricing_factors: List[Dict[str, str]]
-
-
-class InsurancePricingRequest(BaseModel):
-    truck_id: str
-    truck_type: Optional[str] = "Refrigerated Semi"
-    capacity_tons: Optional[float] = 10.0
-    base_price: Optional[float] = 450.0  # Base monthly insurance premium in USD ($)
-    trip_count: Optional[int] = 12
-    incident_count: Optional[int] = 0
-    temp_excursion_count: Optional[int] = 0
-    avg_temp_deviation: Optional[float] = 0.2
-    door_open_incidents: Optional[int] = 0
-    months_in_service: Optional[int] = 6
-
-class InsurancePricingResponse(BaseModel):
-    truck_id: str
-    base_price: float
-    current_price: float
-    price_change_pct: float
-    risk_score: float  # 0 to 100
-    risk_tier: str     # LOW_RISK (Discounted), STANDARD, HIGH_RISK (Surcharge)
-    adjustment_amount: float
-    recommendation: str
-    pricing_factors: List[Dict[str, str]]
+    model_type: Optional[str] = "PyTorch-InsuranceLSTM"
 
 

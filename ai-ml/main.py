@@ -1,9 +1,8 @@
 import asyncio
 import logging
-import requests
 import os
-import secrets
-from datetime import datetime
+import requests
+from datetime import datetime, timezone
 from typing import Dict, List, Set, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,7 +16,8 @@ from models import (
     InsurancePricingRequest,
     InsurancePricingResponse,
 )
-from simulator import fleet_manager, PRODUCT_PROFILES
+from simulator import fleet_manager, resolve_product_profile
+from lstm_engine import lstm_engine
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("coldchain-aiml")
@@ -108,6 +108,8 @@ def health_check():
     return {
         "status": "healthy",
         "service": "coldchain-aiml",
+        "spoilage_lstm_loaded": lstm_engine.spoilage_loaded,
+        "insurance_lstm_loaded": lstm_engine.insurance_loaded,
         "active_trucks": fleet_manager.get_all_truck_ids(),
     }
 
@@ -129,11 +131,37 @@ def list_trucks():
     return {"trucks": trucks}
 
 @app.get("/api/trucks/{truck_id}/telemetry")
-def get_truck_telemetry(truck_id: str):
+def get_truck_telemetry(
+    truck_id: str,
+    target_temp: Optional[float] = None,
+    product_type: Optional[str] = None,
+):
     sim = fleet_manager.get_simulator(truck_id)
+    sim.configure(target_temp=target_temp, product_type=product_type)
     latest = sim.update_step()
+    latest_dict = latest.model_dump()
+    lstm_out = lstm_engine.predict_spoilage(
+        truck_key=truck_id,
+        product_type=latest.product_type,
+        temperature=latest.temperature,
+        target_temp=latest.target_temp,
+        humidity=latest.humidity,
+        door_open=latest.door_open,
+        speed_kmh=latest.gps_coordinates.speed_kmh,
+    )
+    latest_dict.update({
+        "anomaly_score": lstm_out["spoilage_risk"],
+        "spoilage_risk_level": lstm_out["spoilage_risk_level"],
+        "shelf_life_remaining_hours": lstm_out["shelf_life_remaining_hours"],
+        "quality_retention_pct": lstm_out["quality_retention_pct"],
+        "good_env_rsl_hours": lstm_out["good_env_rsl_hours"],
+        "bad_env_rsl_hours": lstm_out["bad_env_rsl_hours"],
+        "environment_condition": lstm_out["environment_condition"],
+        "alert_message": lstm_out["alert_message"] or latest_dict.get("alert_message"),
+        "model_type": lstm_out["model_type"],
+    })
     return {
-        "latest": latest.model_dump(),
+        "latest": latest_dict,
         "history": sim.history[-60:],  # Last 60 readings
     }
 
@@ -150,7 +178,7 @@ def inject_anomaly(truck_id: str, req: AnomalyInjectionRequest):
 
 @app.post("/api/predict/shelf-life", response_model=ShelfLifePredictionResponse)
 def predict_shelf_life(req: ShelfLifePredictionRequest):
-    profile = PRODUCT_PROFILES.get(req.product_type, PRODUCT_PROFILES["Dairy (Pasteurized Milk & Cream)"])
+    profile = resolve_product_profile(req.product_type)
     base_hours = profile["baseline_shelf_life_hours"]
 
     # Kinetic degradation calculation based on temperature excursion
@@ -192,56 +220,22 @@ def predict_shelf_life(req: ShelfLifePredictionRequest):
 # 4. Returns processed payload with route recommendations
 @app.post("/api/iot/process", response_model=ProcessedIoTTelemetry)
 def process_iot_telemetry(req: RawIoTTelemetry):
-    profile = PRODUCT_PROFILES.get(req.product_type, PRODUCT_PROFILES["Dairy (Pasteurized Milk & Cream)"])
-    base_hours = profile["baseline_shelf_life_hours"]
+    profile = resolve_product_profile(req.product_type)
     target_temp = req.target_temp if req.target_temp is not None else profile["target_temp"]
-    crit_temp = profile["critical_temp"]
+    truck_key = req.truck_id or req.connection_number or req.device_id
+    speed = req.speed_kmh if req.speed_kmh is not None else 45.0
 
-    temp_excess = max(0.0, req.temperature - target_temp)
-    peak_excess = max(0.0, req.temperature - crit_temp)
+    lstm_out = lstm_engine.predict_spoilage(
+        truck_key=truck_key,
+        product_type=req.product_type,
+        temperature=req.temperature,
+        target_temp=target_temp,
+        humidity=req.humidity,
+        door_open=bool(req.door_open),
+        speed_kmh=speed,
+    )
 
-    # Kinetic degradation factor
-    degradation_factor = 1.0 + (temp_excess * 0.45) + (peak_excess * 1.5)
-    if req.door_open:
-        degradation_factor += 1.2
-
-    # Spoilage risk calculation (0.0 to 1.0)
-    risk_score = (temp_excess / max(1.0, crit_temp - target_temp)) * 0.65
-    if req.door_open:
-        risk_score += 0.25
-    spoilage_risk = round(max(0.04, min(0.99, risk_score)), 2)
-
-    # Remaining shelf life (hours)
-    rsl = max(1.0, round(base_hours / max(1.0, degradation_factor), 1))
-    quality_pct = max(2.0, min(100.0, round((rsl / base_hours) * 100.0, 1)))
-
-    # Spoilage risk classification & dynamic route suggestion
-    if spoilage_risk >= 0.75 or quality_pct < 30.0:
-        risk_level = "CRITICAL"
-        route_rec = "CRITICAL SPOILAGE ALERT: Rapid thermal excursion! Reroute immediately to nearest cold storage."
-        reroute_suggested = True
-        nearest_market = "City Cold Storage & Distribution Depot (5.4 km)"
-        alert_msg = f"Critical temperature {req.temperature:.1f}°C detected! Spoilage imminent."
-    elif spoilage_risk >= 0.45 or quality_pct < 60.0:
-        risk_level = "HIGH"
-        route_rec = "HIGH RISK: Cargo degradation accelerating. Divert to regional wholesale terminal."
-        reroute_suggested = True
-        nearest_market = "Apex Regional Cold Logistics Hub (14.2 km)"
-        alert_msg = f"Elevated temperature {req.temperature:.1f}°C exceeds safe threshold."
-    elif spoilage_risk >= 0.25 or quality_pct < 80.0:
-        risk_level = "MODERATE"
-        route_rec = "MODERATE RISK: Minor temperature drift. Verify refrigeration unit and prioritize route."
-        reroute_suggested = False
-        nearest_market = "Sector 12 Cold Warehouse (22.0 km)"
-        alert_msg = "Minor thermal stress. Monitor sensor telemetry."
-    else:
-        risk_level = "LOW"
-        route_rec = "ROUTE OPTIMAL: Cargo quality pristine. Target destination on schedule."
-        reroute_suggested = False
-        nearest_market = None
-        alert_msg = None
-
-    ts = req.timestamp or datetime.utcnow().isoformat() + "Z"
+    ts = req.timestamp or datetime.now(timezone.utc).isoformat()
 
     processed = ProcessedIoTTelemetry(
         device_id=req.device_id,
@@ -258,30 +252,35 @@ def process_iot_telemetry(req: RawIoTTelemetry):
         gps={
             "lat": req.gps_lat or 19.0760,
             "lng": req.gps_lng or 72.8777,
-            "speed_kmh": req.speed_kmh or 45.0,
+            "speed_kmh": speed,
         },
         status=req.status or "online",
-        spoilage_risk=spoilage_risk,
-        spoilage_risk_level=risk_level,
-        shelf_life_remaining_hours=rsl,
-        quality_retention_pct=quality_pct,
-        route_recommendation=route_rec,
-        reroute_suggested=reroute_suggested,
-        nearest_safe_market=nearest_market,
-        alert_message=alert_msg,
+        spoilage_risk=lstm_out["spoilage_risk"],
+        spoilage_risk_level=lstm_out["spoilage_risk_level"],
+        shelf_life_remaining_hours=lstm_out["shelf_life_remaining_hours"],
+        quality_retention_pct=lstm_out["quality_retention_pct"],
+        route_recommendation=lstm_out["route_recommendation"],
+        reroute_suggested=lstm_out["reroute_suggested"],
+        nearest_safe_market=lstm_out["nearest_safe_market"],
+        alert_message=lstm_out["alert_message"],
+        good_env_rsl_hours=lstm_out["good_env_rsl_hours"],
+        bad_env_rsl_hours=lstm_out["bad_env_rsl_hours"],
+        environment_condition=lstm_out["environment_condition"],
+        model_type=lstm_out["model_type"],
         timestamp=ts,
     )
 
     # Forward to Main Backend (NestJS)
+    backend_url = os.getenv("BACKEND_API_URL", "http://localhost:4000").rstrip("/")
     try:
         requests.post(
-            f"{os.getenv('BACKEND_API_URL', 'http://localhost:4000')}/api/iot/ingest",
+            f"{backend_url}/api/iot/ingest",
             json=processed.model_dump(),
             headers={"x-iot-ingest-secret": BACKEND_INGEST_SECRET},
             timeout=2.0,
         )
     except Exception as e:
-        logger.debug(f"Could not forward to backend at http://localhost:4000/api/iot/ingest: {e}")
+        logger.debug(f"Could not forward to backend at {backend_url}/api/iot/ingest: {e}")
 
     return processed
 
@@ -291,69 +290,17 @@ def process_iot_telemetry(req: RawIoTTelemetry):
 # thermal excursions, door sensor anomalies, and incident records.
 @app.post("/api/predict/insurance", response_model=InsurancePricingResponse)
 def predict_insurance_pricing(req: InsurancePricingRequest):
-    base_price = max(100.0, req.base_price or 450.0)
-
-    # 1. Calculate Risk Metric
-    thermal_penalty = (req.temp_excursion_count * 9.5) + (req.avg_temp_deviation * 14.0)
-    door_penalty = req.door_open_incidents * 5.0
-    incident_penalty = req.incident_count * 20.0
-
-    # 2. Safety credits for clean trips and tenure
-    safety_credits = min(25.0, (req.trip_count * 1.5) + (req.months_in_service * 1.2))
-
-    total_risk = max(5.0, min(95.0, 15.0 + thermal_penalty + door_penalty + incident_penalty - safety_credits))
-    risk_score = round(total_risk, 1)
-
-    factors: List[Dict[str, str]] = []
-
-    # 3. Determine Monthly Pricing Adjustment (Increase on risk, decrease on compliance)
-    if risk_score <= 25.0:
-        # Compliance Discount: decreases gradually based on good data
-        discount_pct = min(22.0, 6.0 + (req.months_in_service * 1.5) + (req.trip_count * 0.4))
-        discount_pct = round(discount_pct, 1)
-        current_price = round(base_price * (1.0 - (discount_pct / 100.0)), 2)
-        price_change_pct = -discount_pct
-        risk_tier = "LOW_RISK (Discounted)"
-        recommendation = f"Superior cold-chain integrity. Qualified for a {discount_pct}% monthly safe-carrier premium discount."
-
-        factors.append({"factor": "Zero Critical Excursions", "impact": f"-{round(discount_pct * 0.6, 1)}% Discount"})
-        factors.append({"factor": "Consistent Thermal Control", "impact": f"-{round(discount_pct * 0.4, 1)}% Discount"})
-    elif risk_score <= 55.0:
-        # Standard Risk Tier
-        current_price = base_price
-        price_change_pct = 0.0
-        risk_tier = "STANDARD"
-        recommendation = "Standard risk rating. Zero major violations observed. Maintain target temperatures to unlock discounts."
-        factors.append({"factor": "Standard Operation Profile", "impact": "Baseline Rate Maintained"})
-    else:
-        # Surcharge Tier: increases price due to temperature spikes and incidents
-        surcharge_pct = min(45.0, 10.0 + ((risk_score - 55.0) * 0.9))
-        surcharge_pct = round(surcharge_pct, 1)
-        current_price = round(base_price * (1.0 + (surcharge_pct / 100.0)), 2)
-        price_change_pct = surcharge_pct
-        risk_tier = "HIGH_RISK (Surcharge)"
-        recommendation = f"Thermal stress & spoilage hazard detected. Surcharge of +{surcharge_pct}% applied to monthly premium. Inspection required."
-
-        if req.temp_excursion_count > 0:
-            factors.append({"factor": f"{req.temp_excursion_count} Temperature Excursion(s)", "impact": f"+{round(req.temp_excursion_count * 8.0, 1)}% Surcharge"})
-        if req.door_open_incidents > 0:
-            factors.append({"factor": f"{req.door_open_incidents} Door Sensor Breach(es)", "impact": f"+{round(req.door_open_incidents * 4.5, 1)}% Surcharge"})
-        if req.incident_count > 0:
-            factors.append({"factor": f"{req.incident_count} Reported Incident(s)", "impact": f"+{round(req.incident_count * 15.0, 1)}% Surcharge"})
-
-    adjustment_amount = round(current_price - base_price, 2)
-
-    return InsurancePricingResponse(
+    result = lstm_engine.predict_insurance(
         truck_id=req.truck_id,
-        base_price=base_price,
-        current_price=current_price,
-        price_change_pct=price_change_pct,
-        risk_score=risk_score,
-        risk_tier=risk_tier,
-        adjustment_amount=adjustment_amount,
-        recommendation=recommendation,
-        pricing_factors=factors,
+        base_price=req.base_price or 450.0,
+        trip_count=req.trip_count or 12,
+        incident_count=req.incident_count or 0,
+        temp_excursion_count=req.temp_excursion_count or 0,
+        avg_temp_deviation=req.avg_temp_deviation or 0.2,
+        door_open_incidents=req.door_open_incidents or 0,
+        months_in_service=req.months_in_service or 6,
     )
+    return InsurancePricingResponse(**result)
 
 
 

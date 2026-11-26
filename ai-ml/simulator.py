@@ -49,6 +49,22 @@ PRODUCT_PROFILES = {
     },
 }
 
+def resolve_product_profile(product_type: Optional[str]):
+    normalized = (product_type or '').strip().lower()
+    if product_type in PRODUCT_PROFILES:
+        return PRODUCT_PROFILES[product_type]
+    if 'vaccine' in normalized or 'pharma' in normalized:
+        return PRODUCT_PROFILES['Pharmaceuticals (mRNA Vaccines)']
+    if 'dairy' in normalized or 'milk' in normalized:
+        return PRODUCT_PROFILES['Dairy (Pasteurized Milk & Cream)']
+    if 'ice cream' in normalized or 'frozen dessert' in normalized or 'frozen meat' in normalized or 'poultry' in normalized:
+        return PRODUCT_PROFILES['Ice Cream & Frozen Desserts']
+    if 'berry' in normalized or 'produce' in normalized:
+        return PRODUCT_PROFILES['Fresh Produce (Exotic Berries)']
+    if 'seafood' in normalized or 'fish' in normalized:
+        return PRODUCT_PROFILES['Frozen Seafood (Tuna & Salmon)']
+    return PRODUCT_PROFILES['Dairy (Pasteurized Milk & Cream)']
+
 # Pre-seeded routes (Mathura/NCR logistics corridors)
 CORRIDORS = [
     {
@@ -119,6 +135,19 @@ class TruckSimulator:
         self.shelf_life_remaining_hours = self.profile["baseline_shelf_life_hours"] * (1.0 - (self.progress_pct / 100.0) * 0.05)
         self.history: List[Dict] = []
 
+    def configure(self, target_temp: Optional[float] = None, product_type: Optional[str] = None):
+        if product_type:
+            self.product_type = product_type
+            self.profile = resolve_product_profile(product_type)
+
+        if target_temp is not None:
+            new_target = float(target_temp)
+            if new_target != self.target_temp:
+                self.target_temp = new_target
+                if not self.anomaly_active:
+                    self.current_temp = new_target
+                    self.refrigeration_status = 'OPTIMAL'
+
     def inject_anomaly(self, anomaly_type: str, duration_sec: int = 60, custom_temp: Optional[float] = None):
         if anomaly_type == "reset":
             self.anomaly_active = None
@@ -132,7 +161,7 @@ class TruckSimulator:
         if anomaly_type == "door_open":
             self.door_open = True
         elif anomaly_type == "temp_spike":
-            self.current_temp = custom_temp if custom_temp is not None else self.profile["critical_temp"] + 3.0
+            self.current_temp = custom_temp if custom_temp is not None else self.target_temp + max(6.0, self.profile["tolerance"] * 3.0)
             self.refrigeration_status = "CRITICAL"
         elif anomaly_type == "compressor_failure":
             self.refrigeration_status = "CRITICAL"
@@ -211,11 +240,12 @@ class TruckSimulator:
         eta_str = f"{rem_hrs_int}h {rem_mins}m" if rem_hrs_int > 0 else f"{rem_mins} mins"
 
         # AI Anomaly Score & Spoilage kinetic calculation (Arrhenius-like rate)
-        temp_delta = self.current_temp - self.target_temp
-        if temp_delta > 0:
-            spoilage_factor = 1.0 + (temp_delta / 2.0) ** 1.8 * self.profile["spoilage_rate_multiplier"]
+        temp_delta = abs(self.current_temp - self.target_temp)
+        if temp_delta > self.profile["tolerance"]:
+            spoilage_excess = temp_delta - self.profile["tolerance"]
+            spoilage_factor = 1.0 + (spoilage_excess / 2.0) ** 1.8 * self.profile["spoilage_rate_multiplier"]
             self.shelf_life_remaining_hours = max(0.0, self.shelf_life_remaining_hours - (10.0 / 3600.0) * spoilage_factor)
-            anomaly_score = min(1.0, max(0.0, (temp_delta / self.profile["tolerance"]) * 0.4))
+            anomaly_score = min(1.0, max(0.0, (spoilage_excess / self.profile["tolerance"]) * 0.4))
         else:
             self.shelf_life_remaining_hours = max(0.0, self.shelf_life_remaining_hours - (10.0 / 3600.0))
             anomaly_score = 0.05
@@ -224,9 +254,9 @@ class TruckSimulator:
             anomaly_score = max(anomaly_score, 0.85)
 
         # Risk level categorization
-        if anomaly_score >= 0.75 or self.current_temp >= self.profile["critical_temp"]:
+        if anomaly_score >= 0.75 or temp_delta >= self.profile["tolerance"] * 3.0:
             spoilage_risk_level = "CRITICAL"
-            alert = f"CRITICAL EXCURSION: Cargo temp {self.current_temp:.1f}°C exceeds safe threshold ({self.profile['critical_temp']}°C)!"
+            alert = f"CRITICAL EXCURSION: Cargo temp {self.current_temp:.1f} C is outside safe range around target {self.target_temp:.1f} C!"
         elif anomaly_score >= 0.4:
             spoilage_risk_level = "HIGH"
             alert = f"Temperature drift warning: {self.current_temp:.1f}°C exceeds target {self.target_temp}°C"
