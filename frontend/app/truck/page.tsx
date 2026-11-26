@@ -125,6 +125,9 @@ export default function TruckPanel() {
 
   // ── Trip modals ──
   const [showCompleteConfirm, setShowCompleteConfirm] = useState(false);
+  const [showAssignTrip, setShowAssignTrip] = useState(false);
+  const [tripForm, setTripForm] = useState({ origin: '', destination: '', cargo_type: 'Dairy', notes: '' });
+  const [otherCargo, setOtherCargo] = useState('');
   const [saving, setSaving] = useState(false);
 
   // ── Temp control ──
@@ -193,7 +196,7 @@ export default function TruckPanel() {
           }
           throw e;
         }),
-        apiFetch('/api/truck/active-trip').catch(() => null),
+        apiFetch('/api/truck/assigned-trip').catch(() => null),
         apiFetch('/api/truck/issues').catch(() => []),
       ]);
       const resolvedTruck = t && typeof t === 'object' && 'truck' in t ? t.truck : t;
@@ -214,11 +217,14 @@ export default function TruckPanel() {
   useEffect(() => {
     if (user?.role === 'truckUser') {
       fetchAll();
-      // Telemetry: refresh every 30 seconds
+      const telemetryTimer = setInterval(() => fetchTelemetry(), 4000);
       const timer = setInterval(() => fetchAll(false), 30000);
-      return () => clearInterval(timer);
+      return () => {
+        clearInterval(telemetryTimer);
+        clearInterval(timer);
+      };
     }
-  }, [user, fetchAll]);
+  }, [user, fetchAll, fetchTelemetry]);
 
   useEffect(() => {
     if (user?.role !== 'truckUser') return;
@@ -365,6 +371,37 @@ export default function TruckPanel() {
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Existing handlers (preserved)
+  async function handleAssignTrip(e: React.FormEvent) {
+    e.preventDefault();
+    if (saving) return;
+    setSaving(true);
+    setError('');
+    try {
+      const cargoType = tripForm.cargo_type === 'Other' ? otherCargo.trim() : tripForm.cargo_type.trim();
+      if (!tripForm.origin.trim() || !tripForm.destination.trim() || !cargoType) {
+        throw new Error('Origin, destination, and cargo type are required.');
+      }
+      await apiFetch('/api/truck/assign-trip', {
+        method: 'POST',
+        body: JSON.stringify({
+          origin: tripForm.origin.trim(),
+          destination: tripForm.destination.trim(),
+          cargo_type: cargoType,
+          notes: tripForm.notes.trim() || undefined,
+        }),
+      });
+      setSuccess('Trip assigned! Click Start Trip when you are ready to depart.');
+      setShowAssignTrip(false);
+      setTripForm({ origin: '', destination: '', cargo_type: 'Dairy', notes: '' });
+      setOtherCargo('');
+      await fetchAll();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleStartTrip() {
     if (activeTrip?.status !== 'ASSIGNED' || saving) return;
     setSaving(true); setError('');
@@ -456,7 +493,7 @@ export default function TruckPanel() {
           </p>
         </div>
       ) : (
-        <div className="max-w-2xl mx-auto space-y-4 pb-24">
+        <div className="w-full space-y-5 pb-24">
           {/* ── Alerts banner ─────────────────────────────────────────────── */}
           {alertCount > 0 && (
             <div className="rounded p-4 space-y-2" style={{ background: '#F9E0E1', border: '1px solid #e8c5c6' }}>
@@ -485,6 +522,8 @@ export default function TruckPanel() {
           {error && <ErrorAlert message={error} />}
           {success && <SuccessAlert message={success} />}
 
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+            <div className="lg:col-span-7 space-y-5">
           {/* ── 1. TRUCK STATUS ─────────────────────────────────────────── */}
           <div className="card">
             <div className="flex items-start justify-between mb-4">
@@ -690,67 +729,6 @@ export default function TruckPanel() {
               </button>
             </div>
 
-          {/* ── 2. ACTIVE TRIP / START TRIP ─────────────────────────────── */}
-          {activeTrip ? (
-            <div className="card" style={{ border: '1px solid var(--status-on-trip)', background: '#D8E5F210' }}>
-              <div className="flex items-center justify-between gap-2 mb-4">
-                <div className="flex items-center gap-2">
-                  <span className={`w-2.5 h-2.5 rounded-full ${activeTrip.status === 'IN_PROGRESS' ? 'animate-pulse' : ''}`} style={{ background: activeTrip.status === 'IN_PROGRESS' ? 'var(--status-on-trip)' : 'var(--color-gold)' }} />
-                  <p className="text-sm font-semibold" style={{ color: 'var(--color-ink)' }}>{activeTrip.status === 'ASSIGNED' ? 'Assigned Trip' : 'Current Trip'}</p>
-                </div>
-                <span className="text-[10px] font-bold px-2 py-1 rounded bg-blue-50 text-blue-800">{activeTrip.status?.replace('_', ' ')}</span>
-              </div>
-
-              {/* Origin → Destination */}
-              <div className="flex items-center gap-2 mb-4 p-3 rounded" style={{ background: 'var(--color-ivory)' }}>
-                <div className="text-center min-w-0 flex-1">
-                  <p className="text-xs uppercase tracking-wide mb-1" style={{ color: 'var(--color-slate)' }}>From</p>
-                  <p className="font-semibold text-sm truncate">{activeTrip.origin}</p>
-                </div>
-                <div className="text-xl flex-shrink-0" style={{ color: 'var(--color-gold)' }}>→</div>
-                <div className="text-center min-w-0 flex-1">
-                  <p className="text-xs uppercase tracking-wide mb-1" style={{ color: 'var(--color-slate)' }}>To</p>
-                  <p className="font-semibold text-sm truncate">{activeTrip.destination}</p>
-                </div>
-              </div>
-
-              <div className="space-y-2 text-sm mb-4">
-                <div className="flex justify-between"><span style={{ color: 'var(--color-slate)' }}>Trip ID</span><span className="font-mono text-xs">{activeTrip.id?.slice(0, 8).toUpperCase()}</span></div>
-                <div className="flex justify-between"><span style={{ color: 'var(--color-slate)' }}>Truck</span><span className="font-mono font-semibold">{activeTrip.plate_number || truck?.plate_number}</span></div>
-                <div className="flex justify-between"><span style={{ color: 'var(--color-slate)' }}>Assigned</span><span className="tabular-nums text-xs">{formatDateTime(activeTrip.assigned_at)}</span></div>
-                <div className="flex justify-between">
-                  <span style={{ color: 'var(--color-slate)' }}>Cargo</span>
-                  <span className="font-medium">{activeTrip.cargo_type}</span>
-                </div>
-                {activeTrip.started_at && <div className="flex justify-between">
-                  <span style={{ color: 'var(--color-slate)' }}>Started</span>
-                  <span className="tabular-nums text-xs">{formatDateTime(activeTrip.started_at)}</span>
-                </div>}
-                {activeTrip.notes && (
-                  <div className="p-2 rounded text-xs" style={{ background: 'var(--color-ivory)', color: 'var(--color-slate)' }}>
-                    {activeTrip.notes}
-                  </div>
-                )}
-              </div>
-
-              {activeTrip.status === 'ASSIGNED' ? <button className="btn-primary w-full py-4 text-sm font-bold" onClick={handleStartTrip} disabled={saving}>
-                {saving ? 'Starting…' : 'Start Trip'}
-              </button> : <button
-                className="w-full py-4 rounded text-sm font-bold transition-colors"
-                style={{ background: 'var(--status-issue)', color: 'white' }}
-                onClick={() => setShowCompleteConfirm(true)}
-                disabled={saving}
-              >
-                Mark as Completed
-              </button>}
-            </div>
-          ) : (
-            <div className="card text-center py-8">
-              <p className="text-sm font-semibold mb-1">No trip assigned</p>
-              <p className="text-xs" style={{ color: 'var(--color-slate)' }}>Your fleet manager will assign a shipment to your truck.</p>
-            </div>
-          )}
-
           {/* ── 3. LIVE ROUTE & NAVIGATION MAP ────────────────────────────── */}
           {activeTrip && (
             <div className="card overflow-hidden" style={{ padding: 0 }}>
@@ -807,6 +785,83 @@ export default function TruckPanel() {
                   {shipmentRoute.approximateEndpoints && <span className="text-amber-700">Endpoint matches are area-level</span>}
                 </div>
               )}
+            </div>
+          )}
+            </div>
+
+            <div className="lg:col-span-5 space-y-5">
+          {/* ── 2. ACTIVE TRIP / START TRIP ─────────────────────────────── */}
+          {activeTrip ? (
+            <div className="card" style={{ border: '1px solid var(--status-on-trip)', background: '#D8E5F210' }}>
+              <div className="flex items-center justify-between gap-2 mb-4">
+                <div className="flex items-center gap-2">
+                  <span className={`w-2.5 h-2.5 rounded-full ${activeTrip.status === 'IN_PROGRESS' ? 'animate-pulse' : ''}`} style={{ background: activeTrip.status === 'IN_PROGRESS' ? 'var(--status-on-trip)' : 'var(--color-gold)' }} />
+                  <p className="text-sm font-semibold" style={{ color: 'var(--color-ink)' }}>{activeTrip.status === 'ASSIGNED' ? 'Assigned Trip' : 'Current Trip'}</p>
+                </div>
+                <span className="text-[10px] font-bold px-2 py-1 rounded bg-blue-50 text-blue-800">{activeTrip.status?.replace('_', ' ')}</span>
+              </div>
+
+              {/* Origin → Destination */}
+              <div className="flex items-center gap-2 mb-4 p-3 rounded" style={{ background: 'var(--color-ivory)' }}>
+                <div className="text-center min-w-0 flex-1">
+                  <p className="text-xs uppercase tracking-wide mb-1" style={{ color: 'var(--color-slate)' }}>From</p>
+                  <p className="font-semibold text-sm truncate">{activeTrip.origin}</p>
+                </div>
+                <div className="text-xl flex-shrink-0" style={{ color: 'var(--color-gold)' }}>→</div>
+                <div className="text-center min-w-0 flex-1">
+                  <p className="text-xs uppercase tracking-wide mb-1" style={{ color: 'var(--color-slate)' }}>To</p>
+                  <p className="font-semibold text-sm truncate">{activeTrip.destination}</p>
+                </div>
+              </div>
+
+              <div className="space-y-2 text-sm mb-4">
+                <div className="flex justify-between"><span style={{ color: 'var(--color-slate)' }}>Trip ID</span><span className="font-mono text-xs">{activeTrip.id?.slice(0, 8).toUpperCase()}</span></div>
+                <div className="flex justify-between"><span style={{ color: 'var(--color-slate)' }}>Truck</span><span className="font-mono font-semibold">{activeTrip.plate_number || truck?.plate_number}</span></div>
+                <div className="flex justify-between"><span style={{ color: 'var(--color-slate)' }}>Assigned</span><span className="tabular-nums text-xs">{formatDateTime(activeTrip.assigned_at)}</span></div>
+                <div className="flex justify-between">
+                  <span style={{ color: 'var(--color-slate)' }}>Cargo</span>
+                  <span className="font-medium">{activeTrip.cargo_type}</span>
+                </div>
+                {activeTrip.started_at && <div className="flex justify-between">
+                  <span style={{ color: 'var(--color-slate)' }}>Started</span>
+                  <span className="tabular-nums text-xs">{formatDateTime(activeTrip.started_at)}</span>
+                </div>}
+                {activeTrip.notes && (
+                  <div className="p-2 rounded text-xs" style={{ background: 'var(--color-ivory)', color: 'var(--color-slate)' }}>
+                    {activeTrip.notes}
+                  </div>
+                )}
+              </div>
+
+              {activeTrip.status === 'ASSIGNED' ? <button className="btn-primary w-full py-4 text-sm font-bold" onClick={handleStartTrip} disabled={saving}>
+                {saving ? 'Starting…' : 'Start Trip'}
+              </button> : <button
+                className="w-full py-4 rounded text-sm font-bold transition-colors"
+                style={{ background: 'var(--status-issue)', color: 'white' }}
+                onClick={() => setShowCompleteConfirm(true)}
+                disabled={saving}
+              >
+                Mark as Completed
+              </button>}
+            </div>
+          ) : (
+            <div className="card text-center py-8 space-y-3">
+              <div>
+                <p className="text-sm font-semibold mb-1">No trip assigned</p>
+                <p className="text-xs" style={{ color: 'var(--color-slate)' }}>
+                  Assign a route yourself or ask your fleet owner/admin to assign one from Trip Management.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn-primary px-5 py-2.5 text-sm font-semibold"
+                onClick={() => {
+                  setError('');
+                  setShowAssignTrip(true);
+                }}
+              >
+                + Assign Trip
+              </button>
             </div>
           )}
 
@@ -889,7 +944,7 @@ export default function TruckPanel() {
                 <span className="text-lg">📦</span>
                 <div>
                   <p className="text-sm font-semibold" style={{ color: 'var(--color-ink)' }}>Live Cargo Status</p>
-                  <p className="text-xs" style={{ color: 'var(--color-slate)' }}>Refreshes every 30 seconds</p>
+                  <p className="text-xs" style={{ color: 'var(--color-slate)' }}>Refreshes every 4 seconds</p>
                 </div>
               </div>
               <span className="text-[10px] font-bold px-2 py-1 rounded uppercase"
@@ -1049,10 +1104,99 @@ export default function TruckPanel() {
           >
             🚨 EMERGENCY REPORT
           </button>
+            </div>
+          </div>
         </div>
       )}
 
       {/* ── MODALS ──────────────────────────────────────────────────────────── */}
+
+      {showAssignTrip && (
+        <Modal title="Assign Trip" onClose={() => setShowAssignTrip(false)}>
+          <form onSubmit={handleAssignTrip} className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="block text-xs font-medium uppercase tracking-wide" style={{ color: 'var(--color-slate)' }}>
+                  Origin City <span style={{ color: 'var(--status-issue)' }}>*</span>
+                </label>
+                <input
+                  type="text"
+                  value={tripForm.origin}
+                  onChange={e => setTripForm(f => ({ ...f, origin: e.target.value }))}
+                  placeholder="e.g. Mumbai"
+                  required
+                  className="input-field"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="block text-xs font-medium uppercase tracking-wide" style={{ color: 'var(--color-slate)' }}>
+                  Destination City <span style={{ color: 'var(--status-issue)' }}>*</span>
+                </label>
+                <input
+                  type="text"
+                  value={tripForm.destination}
+                  onChange={e => setTripForm(f => ({ ...f, destination: e.target.value }))}
+                  placeholder="e.g. Delhi"
+                  required
+                  className="input-field"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="block text-xs font-medium uppercase tracking-wide" style={{ color: 'var(--color-slate)' }}>
+                Cargo Type <span style={{ color: 'var(--status-issue)' }}>*</span>
+              </label>
+              <select
+                value={tripForm.cargo_type}
+                onChange={e => setTripForm(f => ({ ...f, cargo_type: e.target.value }))}
+                className="input-field"
+              >
+                {['Dairy', 'Vaccines', 'Frozen Seafood', 'Fresh Produce', 'Pharmaceuticals', 'Other'].map(c => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+
+            {tripForm.cargo_type === 'Other' && (
+              <div className="space-y-1">
+                <label className="block text-xs font-medium uppercase tracking-wide" style={{ color: 'var(--color-slate)' }}>
+                  Specify Cargo <span style={{ color: 'var(--status-issue)' }}>*</span>
+                </label>
+                <input
+                  type="text"
+                  value={otherCargo}
+                  onChange={e => setOtherCargo(e.target.value)}
+                  placeholder="Enter cargo type"
+                  required
+                  className="input-field"
+                />
+              </div>
+            )}
+
+            <div className="space-y-1">
+              <label className="block text-xs font-medium uppercase tracking-wide" style={{ color: 'var(--color-slate)' }}>
+                Notes (Optional)
+              </label>
+              <textarea
+                value={tripForm.notes}
+                onChange={e => setTripForm(f => ({ ...f, notes: e.target.value }))}
+                placeholder="Handling instructions or route notes…"
+                rows={2}
+                className="input-field"
+              />
+            </div>
+
+            {error && <ErrorAlert message={error} />}
+            <div className="flex gap-3">
+              <button type="submit" className="btn-primary flex-1 py-3" disabled={saving}>
+                {saving ? 'Assigning…' : 'Assign Trip'}
+              </button>
+              <button type="button" className="btn-ghost flex-1" onClick={() => setShowAssignTrip(false)}>Cancel</button>
+            </div>
+          </form>
+        </Modal>
+      )}
 
       {showCompleteConfirm && (
         <Modal title="Complete This Trip?" onClose={() => setShowCompleteConfirm(false)}>
