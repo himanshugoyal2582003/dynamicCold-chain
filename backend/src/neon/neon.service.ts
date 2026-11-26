@@ -70,11 +70,20 @@ export class NeonService implements OnModuleInit, OnApplicationShutdown {
     this.persistent = true;
 
     try {
-      if (this.provider === 'Neon PostgreSQL') {
+      if (this.provider === 'Neon PostgreSQL' && process.env.NEON_USE_HTTP === 'true') {
         this.sql = neon(connectionString);
       } else {
         const { Pool } = await import('pg');
-        const pool = new Pool({ connectionString });
+        const pool = new Pool({
+          connectionString,
+          max: 10,
+          idleTimeoutMillis: 30000,
+          connectionTimeoutMillis: 30000,
+          keepAlive: true,
+        });
+        pool.on('error', (err: any) => {
+          this.logger.warn(`[DB] Idle pool client error: ${err?.message || err}`);
+        });
         this.pool = pool;
         this.sql = async (stringsOrQuery: any, ...values: any[]) => {
           if (typeof stringsOrQuery === 'string') {
