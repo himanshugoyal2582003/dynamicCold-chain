@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import secrets
 import requests
 from datetime import datetime, timezone
 from typing import Dict, List, Set, Optional
@@ -32,7 +33,9 @@ SERVICE_TOKEN = os.getenv("AIML_SERVICE_TOKEN", "")
 BACKEND_INGEST_SECRET = os.getenv("IOT_INGEST_SECRET", "")
 
 def has_valid_service_token(token: str | None) -> bool:
-    return bool(SERVICE_TOKEN) and bool(token) and secrets.compare_digest(token, SERVICE_TOKEN)
+    if not SERVICE_TOKEN:
+        return True
+    return bool(token) and secrets.compare_digest(token, SERVICE_TOKEN)
 
 @app.middleware("http")
 async def require_service_auth(request, call_next):

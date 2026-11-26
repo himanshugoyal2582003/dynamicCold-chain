@@ -20,8 +20,9 @@ const STATUS_MAP: Record<string, string> = {
 };
 
 export function StatusBadge({ status }: BadgeProps) {
-  const cls = STATUS_MAP[status] || 'badge-available';
-  const label = status.replace('_', ' ');
+  const safeStatus = typeof status === 'string' && status.trim() ? status : 'available';
+  const cls = STATUS_MAP[safeStatus] || 'badge-available';
+  const label = safeStatus.replace(/_/g, ' ');
   return (
     <span
       className={`${cls} inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold uppercase tracking-wide`}

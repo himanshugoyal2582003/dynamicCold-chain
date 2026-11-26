@@ -82,6 +82,9 @@ export class IotService implements OnModuleInit, OnModuleDestroy {
       await sql`ALTER TABLE trip_telemetry_history ADD COLUMN IF NOT EXISTS predicted_insurance_price NUMERIC(8,2);`;
       await sql`ALTER TABLE trip_telemetry_history ADD COLUMN IF NOT EXISTS insurance_risk_score NUMERIC(5,2);`;
       await sql`ALTER TABLE trip_telemetry_history ADD COLUMN IF NOT EXISTS model_type VARCHAR(50);`;
+      await sql`ALTER TABLE trips ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'IN_PROGRESS';`;
+      await sql`ALTER TABLE trips ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;`;
+      await sql`UPDATE trips SET status = CASE WHEN ended_at IS NULL THEN 'IN_PROGRESS' ELSE 'COMPLETED' END WHERE status IS NULL;`;
     } catch (e: any) {
       this.logger.warn(`Could not ensure IoT/LSTM schema columns: ${e.message}`);
     }
@@ -123,13 +126,17 @@ export class IotService implements OnModuleInit, OnModuleDestroy {
           ) continue;
 
           const baseUrl = process.env.AI_ML_API_URL || 'http://localhost:8000';
+          const aiServiceToken = process.env.AIML_SERVICE_TOKEN || process.env.AI_ML_SERVICE_TOKEN || '';
           const targetTemp = truck.target_temp_c == null ? 4 : Number(truck.target_temp_c);
           const params = new URLSearchParams({ target_temp: String(targetTemp) });
           const productType = truck.cargo_type || truck.type;
           if (productType) params.set('product_type', productType);
           const response = await fetch(
             `${baseUrl}/api/trucks/${encodeURIComponent(truck.plate_number)}/telemetry?${params.toString()}`,
-            { signal: AbortSignal.timeout(4000) },
+            {
+              headers: aiServiceToken ? { 'x-service-token': aiServiceToken } : undefined,
+              signal: AbortSignal.timeout(4000),
+            },
           );
           if (!response.ok) continue;
 

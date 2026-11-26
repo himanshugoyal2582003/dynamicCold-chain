@@ -196,13 +196,14 @@ export default function TruckPanel() {
         apiFetch('/api/truck/active-trip').catch(() => null),
         apiFetch('/api/truck/issues').catch(() => []),
       ]);
-      setTruck(t);
+      const resolvedTruck = t && typeof t === 'object' && 'truck' in t ? t.truck : t;
+      setTruck(resolvedTruck || null);
       if (iss != null && !Array.isArray(iss)) throw new Error('GET /api/truck/issues returned an invalid issue response.');
       const resolvedTrip = at && typeof at === 'object' && 'trip' in at ? at.trip : at;
       setActiveTrip(resolvedTrip || null);
       setIssuesList(Array.isArray(iss) ? iss : []);
-      if (t) setTempInput(String(t.target_temp_c));
-      if (t) await fetchTelemetry();
+      if (resolvedTruck) setTempInput(String(resolvedTruck.target_temp_c));
+      if (resolvedTruck) await fetchTelemetry();
     } catch (e: any) {
       setLoadError(e?.message || 'Could not load your assigned truck.');
     } finally {

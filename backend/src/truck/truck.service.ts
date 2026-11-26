@@ -56,7 +56,7 @@ export class TruckService {
 
   async getActiveTrip(truckId: string) {
     const rows = await this.sql(
-      `SELECT * FROM trips WHERE truck_id = $1 AND status = 'IN_PROGRESS' ORDER BY started_at DESC LIMIT 1`,
+      `SELECT * FROM trips WHERE truck_id = $1 AND (status = 'IN_PROGRESS' OR (status IS NULL AND ended_at IS NULL)) ORDER BY started_at DESC LIMIT 1`,
       [truckId],
     );
     return rows[0] || null;
@@ -129,7 +129,9 @@ export class TruckService {
       const targetTemp = truck.target_temp_c == null ? 4 : Number(truck.target_temp_c);
       const params = new URLSearchParams({ target_temp: String(targetTemp), product_type: truck.type || 'Cold Cargo' });
       const baseUrl = process.env.AI_ML_API_URL || 'http://localhost:8000';
+      const aiServiceToken = process.env.AIML_SERVICE_TOKEN || process.env.AI_ML_SERVICE_TOKEN || '';
       const res = await fetch(`${baseUrl}/api/trucks/${encodeURIComponent(plate)}/telemetry?${params.toString()}`, {
+        headers: aiServiceToken ? { 'x-service-token': aiServiceToken } : undefined,
         signal: AbortSignal.timeout(4000),
       });
       if (res.ok) {
