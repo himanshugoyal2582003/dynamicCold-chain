@@ -1,4 +1,4 @@
-import { Injectable, Logger, ForbiddenException, BadRequestException, ConflictException } from '@nestjs/common';
+import { Injectable, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { NeonService } from '../neon/neon.service';
 
 @Injectable()
@@ -168,8 +168,9 @@ export class OwnerService {
   }
 
   async updateTargetTemp(ownerId: string, truckId: string, targetTempC: number) {
-    if (!Number.isFinite(targetTempC) || targetTempC < -30 || targetTempC > 25) {
-      throw new ForbiddenException('Target temperature must be between -30°C and +25°C.');
+    const temp = Number(targetTempC);
+    if (!Number.isFinite(temp) || temp < -30 || temp > 25) {
+      throw new BadRequestException('Target temperature must be between -30°C and +25°C.');
     }
     const check = await this.sql(
       `SELECT id FROM trucks WHERE id = $1 AND owner_id = $2 AND active = true`,
@@ -179,7 +180,7 @@ export class OwnerService {
 
     const rows = await this.sql(
       `UPDATE trucks SET target_temp_c = $1 WHERE id = $2 RETURNING *`,
-      [targetTempC, truckId],
+      [temp, truckId],
     );
     return rows[0];
   }
@@ -188,37 +189,67 @@ export class OwnerService {
     ownerId: string,
     data: { name: string; email: string; password?: string; truckId?: string },
   ) {
-    const name = typeof data?.name === 'string' ? data.name.trim() : '';
-    const email = typeof data?.email === 'string' ? data.email.trim().toLowerCase() : '';
-    const password = data?.password || 'password123';
-    const truckId = data?.truckId?.trim() || null;
-    if (!name || name.length > 100) throw new BadRequestException('Driver name is required and must be at most 100 characters.');
-    if (email.length > 150 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new BadRequestException('A valid driver email address is required.');
-    if (typeof password !== 'string' || password.length < 8 || password.length > 72) throw new BadRequestException('Password must be between 8 and 72 characters.');
-    if (truckId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(truckId)) {
-      throw new BadRequestException('A valid truck must be selected.');
+    if (!data.name?.trim() || !data.email?.trim()) {
+      throw new BadRequestException('Driver name and email are required.');
     }
-    const bcrypt = await import('bcryptjs');
-    const hash = await bcrypt.hash(password, 10);
-    try {
-      const rows = await this.sql(
-        `INSERT INTO users (name, email, password_hash, role, owner_id, truck_id, active)
-         SELECT $1, $2, $3, 'truckUser', owner.id, truck.id, true
-         FROM users owner
-         LEFT JOIN trucks truck ON truck.id = $5 AND truck.owner_id = owner.id AND truck.active = true
-         WHERE owner.id = $4 AND owner.role = 'owner' AND owner.active = true
-           AND ($5 IS NULL OR truck.id IS NOT NULL)
-         RETURNING id, name, email, role, truck_id, owner_id, active, created_at`,
-        [name, email, hash, ownerId, truckId],
+    const cleanEmail = data.email.toLowerCase().trim();
+    const existing = await this.sql(`SELECT id FROM users WHERE email = $1 LIMIT 1`, [cleanEmail]);
+    if (existing.length > 0) {
+      throw new BadRequestException('An account with this email address already exists.');
+    }
+
+    if (data.truckId) {
+      const truckCheck = await this.sql(
+        `SELECT id FROM trucks WHERE id = $1 AND owner_id = $2 AND active = true`,
+        [data.truckId, ownerId],
       );
-      if (!rows[0]) throw new BadRequestException('Owner is inactive or the selected truck does not belong to this owner.');
-      this.logger.log('[DB] Driver INSERT successful');
-      return rows[0];
-    } catch (error: any) {
-      if (error instanceof BadRequestException) throw error;
-      if (error?.code === '23505') throw new ConflictException('A user with this email address is already registered.');
-      throw error;
+      if (!truckCheck.length) {
+        throw new ForbiddenException('Selected truck not found or not under your ownership.');
+      }
+      await this.sql(`UPDATE users SET truck_id = NULL WHERE truck_id = $1`, [data.truckId]);
     }
+
+    const bcrypt = await import('bcryptjs');
+    const defaultPassword = data.password || 'password123';
+    const hash = await bcrypt.hash(defaultPassword, 10);
+
+    const rows = await this.sql(
+      `INSERT INTO users (name, email, password_hash, role, owner_id, truck_id, active)
+       VALUES ($1, $2, $3, 'truckUser', $4, $5, true)
+       RETURNING id, name, email, role, truck_id, owner_id`,
+      [data.name.trim(), cleanEmail, hash, ownerId, data.truckId || null],
+    );
+    return rows[0];
+  }
+
+  async deleteDriver(ownerId: string, driverId: string) {
+    const rows = await this.sql(`
+      UPDATE users SET active = false, truck_id = NULL
+      WHERE id = $1 AND owner_id = $2 AND role = 'truckUser' AND active = true
+      RETURNING id;
+    `, [driverId, ownerId]);
+    if (!rows.length) throw new ForbiddenException('Driver not found or access denied.');
+    return { success: true };
+  }
+
+  async deleteTruck(ownerId: string, truckId: string) {
+    const rows = await this.sql(`
+      WITH target_truck AS (
+        UPDATE trucks SET active = false, iot_connection_number = NULL
+        WHERE id = $1 AND owner_id = $2 AND active = true
+        RETURNING id
+      ), unassigned_drivers AS (
+        UPDATE users SET truck_id = NULL WHERE truck_id IN (SELECT id FROM target_truck)
+        RETURNING id
+      ), ended_trips AS (
+        UPDATE trips SET ended_at = NOW()
+        WHERE truck_id IN (SELECT id FROM target_truck) AND ended_at IS NULL
+        RETURNING id
+      )
+      SELECT id FROM target_truck;
+    `, [truckId, ownerId]);
+    if (!rows.length) throw new ForbiddenException('Truck not found or access denied.');
+    return { success: true };
   }
 
   async createTruck(
@@ -231,37 +262,56 @@ export class OwnerService {
       iot_connection_number?: string;
     },
   ) {
-    const plate = typeof data?.plate_number === 'string' ? data.plate_number.trim().toUpperCase() : '';
-    const type = typeof data?.type === 'string' ? data.type.trim() : 'Refrigerated Semi 10T';
-    const capacity = Number(data?.capacity_tons);
-    const targetTemp = data?.target_temp_c === undefined ? 4 : Number(data.target_temp_c);
-    if (!plate || plate.length > 50) throw new BadRequestException('A valid truck registration number is required.');
-    if (!type || type.length > 50) throw new BadRequestException('Truck type must be between 1 and 50 characters.');
-    if (!Number.isFinite(capacity) || capacity <= 0 || capacity > 999.99) throw new BadRequestException('Truck capacity must be greater than 0 and no more than 999.99 tons.');
-    if (!Number.isFinite(targetTemp) || targetTemp < -30 || targetTemp > 25) throw new BadRequestException('Target temperature must be between -30°C and 25°C.');
-    try {
-      const rows = await this.sql(
-        `INSERT INTO trucks (owner_id, plate_number, type, capacity_tons, target_temp_c, iot_connection_number, status, active)
-         SELECT owner.id, $2, $3, CAST($4 AS NUMERIC), CAST($5 AS NUMERIC), $6, 'available', true
-         FROM users owner
-         WHERE owner.id = $1 AND owner.role = 'owner' AND owner.active = true
-         RETURNING *`,
-        [
-          ownerId,
-          plate,
-          type,
-          capacity,
-          targetTemp,
-          data.iot_connection_number ? data.iot_connection_number.trim().toUpperCase() : null,
-        ],
-      );
-      if (!rows[0]) throw new ForbiddenException('Owner is inactive or unavailable.');
-      this.logger.log('[DB] Truck INSERT successful');
-      return rows[0];
-    } catch (error: any) {
-      if (error instanceof ForbiddenException || error instanceof BadRequestException) throw error;
-      if (error?.code === '23505') throw new ConflictException('A truck with this registration number already exists.');
-      throw error;
+    if (!data.plate_number?.trim()) {
+      throw new BadRequestException('Plate number is required.');
     }
+    const plate = data.plate_number.trim().toUpperCase();
+    const existingPlate = await this.sql(
+      `SELECT id FROM trucks WHERE UPPER(plate_number) = $1 LIMIT 1`,
+      [plate],
+    );
+    if (existingPlate.length) {
+      throw new BadRequestException('A truck with this plate number already exists.');
+    }
+
+    const connectionNumber = data.iot_connection_number?.trim().toUpperCase() || null;
+    if (connectionNumber) {
+      const existingConnection = await this.sql(
+        `SELECT id FROM trucks WHERE UPPER(iot_connection_number) = $1 AND active = true LIMIT 1`,
+        [connectionNumber],
+      );
+      if (existingConnection.length) {
+        throw new BadRequestException('This IoT device is already paired with another truck.');
+      }
+    }
+
+    const rows = await this.sql(
+      `INSERT INTO trucks (owner_id, plate_number, type, capacity_tons, target_temp_c, iot_connection_number, status, active)
+       VALUES ($1, $2, $3, $4, $5, $6, 'available', true)
+       RETURNING *`,
+      [
+        ownerId,
+        plate,
+        data.type || 'Refrigerated Semi 10T',
+        data.capacity_tons ?? 10.0,
+        data.target_temp_c ?? 4.0,
+        connectionNumber,
+      ],
+    );
+    return rows[0];
+  }
+
+  async getLstmLogs(ownerId: string, limit = 200) {
+    return this.sql(
+      `SELECT h.*, t.plate_number, t.type AS truck_type,
+              t.base_insurance_price AS truck_base_price,
+              t.current_insurance_price AS truck_current_price
+       FROM trip_telemetry_history h
+       INNER JOIN trucks t ON t.id = h.truck_id
+       WHERE t.owner_id = $1::uuid
+       ORDER BY h.recorded_at DESC
+       LIMIT $2`,
+      [ownerId, limit],
+    );
   }
 }

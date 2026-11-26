@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Patch, Post, Body, Param, Req, UnauthorizedException, ForbiddenException, BadRequestException,
+  Controller, Get, Patch, Post, Delete, Body, Param, Req, UnauthorizedException, ForbiddenException,
 } from '@nestjs/common';
 import { Request } from 'express';
 import { OwnerService } from './owner.service';
@@ -18,6 +18,18 @@ export class OwnerController {
   async getMyTrucks(@Req() req: Request) {
     const ownerId = assertOwner(req);
     return this.ownerService.getMyTrucks(ownerId);
+  }
+
+  @Get('lstm-logs')
+  async getLstmLogs(@Req() req: Request) {
+    const ownerId = assertOwner(req);
+    return this.ownerService.getLstmLogs(ownerId);
+  }
+
+  @Delete('trucks/:id')
+  async deleteTruck(@Req() req: Request, @Param('id') id: string) {
+    const ownerId = assertOwner(req);
+    return this.ownerService.deleteTruck(ownerId, id);
   }
 
   @Get('trucks/:id')
@@ -55,6 +67,12 @@ export class OwnerController {
   async getDrivers(@Req() req: Request) {
     const ownerId = assertOwner(req);
     return this.ownerService.getMyDrivers(ownerId);
+  }
+
+  @Delete('drivers/:id')
+  async deleteDriver(@Req() req: Request, @Param('id') id: string) {
+    const ownerId = assertOwner(req);
+    return this.ownerService.deleteDriver(ownerId, id);
   }
 
   @Post('drivers')
