@@ -41,10 +41,12 @@ async function streamSingleDevice(device: IoTDevice) {
   let pipelineSuccess = false;
 
   try {
-    if (!AIML_SERVICE_TOKEN) throw new Error('AIML_SERVICE_TOKEN is not configured');
     const aiRes = await fetch(AIML_API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-service-token': AIML_SERVICE_TOKEN },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(AIML_SERVICE_TOKEN ? { 'x-service-token': AIML_SERVICE_TOKEN } : {}),
+      },
       body: JSON.stringify(rawPayload),
     });
 

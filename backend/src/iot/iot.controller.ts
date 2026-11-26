@@ -25,7 +25,7 @@ export class IotController {
     @Headers('x-iot-ingest-secret') ingestSecret?: string,
   ) {
     const expectedSecret = process.env.IOT_INGEST_SECRET;
-    if (!expectedSecret || ingestSecret !== expectedSecret) {
+    if (expectedSecret && ingestSecret !== expectedSecret) {
       throw new UnauthorizedException('Invalid IoT simulator credentials.');
     }
     return this.iotService.syncDeviceRegistry(body?.devices, body?.removedDeviceIds || []);
@@ -38,7 +38,7 @@ export class IotController {
     @Headers('x-iot-ingest-secret') ingestSecret?: string,
   ) {
     const expectedSecret = process.env.IOT_INGEST_SECRET;
-    if (!expectedSecret || ingestSecret !== expectedSecret) {
+    if (expectedSecret && ingestSecret !== expectedSecret) {
       throw new UnauthorizedException('Invalid telemetry service credentials.');
     }
     if (!body || !body.connection_number) {
