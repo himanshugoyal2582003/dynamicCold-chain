@@ -1,6 +1,6 @@
 # ColdChain — Refrigerated Fleet Intelligence & Dual-LSTM Insurance Platform
 
-A full-stack cold-chain logistics, IoT telemetry, and AI-driven dynamic insurance platform built with **Next.js 14**, **NestJS**, **FastAPI + PyTorch LSTM**, and **Neon Postgres**.
+A full-stack cold-chain logistics, IoT telemetry, and AI-driven dynamic insurance platform built with **Next.js 14**, **NestJS 11**, **FastAPI + PyTorch LSTM**, and **Neon Postgres**.
 
 ---
 
@@ -11,40 +11,37 @@ flowchart LR
     IOT["IoT Simulator Portal\n(Next.js :3001)"] -->|"Raw Sensor Telemetry\n(Temp, Humidity, Door, GPS)"| AIML["AI/ML Service\n(FastAPI + PyTorch :8000)"]
     AIML -->|"SpoilageLSTM Prediction\n(Good vs. Bad Env RSL)"| BE["Main Backend\n(NestJS :4000)"]
     BE <-->|"InsuranceLSTM Pricing\n(INR ₹/mo)"| AIML
-    BE -->|"1-Min Snapshots & Fleet Data"| DB[("Neon Postgres")]
-    FE["Fleet & Driver Portal\n(Next.js :3000)"] <-->|"REST + WebSockets"| BE
+    BE -->|"Pooled TCP/TLS (pg.Pool)"| DB[("Neon Postgres")]
+    FE["Fleet & Driver Portal\n(Next.js :3000)"] <-->|"REST + Socket.IO (4s Live)"| BE
 ```
 
 ### Monorepo Structure
 
-| Folder | Stack | Port | Purpose |
-| :--- | :--- | :--- | :--- |
-| `frontend/` | Next.js 14, Tailwind, Leaflet, Three.js | `:3000` | Admin, Fleet Owner (Company), and Driver portals + PDF reports |
-| `backend/` | NestJS 11, Socket.IO, Neon Serverless | `:4000` | Auth/RBAC, fleet & trip APIs, 1-minute Neon DB LSTM logging |
-| `ai-ml/` | FastAPI, PyTorch, Pandas, Streamlit | `:8000` | Synthetic data generator, `SpoilageLSTM` & `InsuranceLSTM`, route simulator |
-| `iot/` | Next.js 14 | `:3001` | Multi-device ESP32 sensor simulator & anomaly injection portal |
+| Folder | Stack | Port | Deployment | Purpose |
+| :--- | :--- | :--- | :--- | :--- |
+| `frontend/` | Next.js 14, Tailwind, Leaflet, Three.js | `:3000` | **Vercel / Netlify** | Enterprise landing page, 4,934-warehouse GIS map, 3D Sentinel X1 showcase, Admin, Company, and Driver portals |
+| `backend/` | NestJS 11, Socket.IO, `pg.Pool` | `:4000` | **Render** | Auth/RBAC, fleet & 3-role trip dispatch, 1-minute Neon DB LSTM logging |
+| `ai-ml/` | FastAPI, PyTorch, Pandas | `:8000` | **Render** | Synthetic data generator, `SpoilageLSTM` & `InsuranceLSTM`, route simulator |
+| `iot/` | Next.js 14 | `:3001` | **Vercel / Netlify** | Multi-device ESP32 sensor simulator with auto-stream & anomaly injection |
 
 ---
 
-## Dual-LSTM AI/ML & 1-Minute Neon DB Pipeline
+## Key Capabilities
 
-1. **Synthetic Dataset Generation & Training (`ai-ml/train_lstm.py`)**
-   - Generates 2,400 time-series sensor sequences (`ai-ml/data/coldchain_sensor_data.csv`) across **good**, **moderate**, and **bad/excursion** environments (temperature spikes, door-open events, compressor failures) for 5 cargo profiles.
-   - Generates 2,000 insurance underwriting sequences (`ai-ml/data/coldchain_insurance_data.csv`).
-   - Trains two PyTorch LSTM models and saves weights to `ai-ml/artifacts/`:
-     - `spoilage_lstm.pt` (`SpoilageLSTM`): Predicts `spoilage_risk`, `spoilage_risk_level`, `shelf_life_remaining_hours`, `quality_retention_pct`, and **Good vs. Bad Environment** remaining shelf-life (`good_env_rsl_hours`, `bad_env_rsl_hours`).
-     - `insurance_lstm.pt` (`InsuranceLSTM`): Uses sensor/spoilage sequences, excursion counts, door events, and trip history anchored on the Admin-configured real base price (`₹/mo`) to compute dynamic monthly premiums (`₹/mo`), risk score (`0–100`), and risk tier.
-
-2. **1-Minute Neon Postgres Persistence (`backend/src/iot/iot.service.ts`)**
-   - Every **1 minute** (`SNAPSHOT_INTERVAL_MS = 60 * 1000`), active trucks persist both their `SpoilageLSTM` output and `InsuranceLSTM` pricing snapshot into `trip_telemetry_history` in Neon Postgres.
-
-3. **Admin, Company & PDF Reporting (`frontend/`)**
-   - **Admin (`/admin/insurance`, `/admin/trucks`)**: Set/edit real base insurance prices (`₹/mo`) per truck, trigger `InsuranceLSTM`, inspect 1-minute Neon DB logs, and export **All Companies & Trucks PDF**, **Per-Company PDF**, or **Per-Truck PDF** reports.
-   - **Company / Owner (`/owner?tab=insurance`, `/owner/trucks/[id]`)**: View fleet insurance adjustments in `₹`, inspect 1-minute LSTM logs, and export **Company Fleet PDF** or **Per-Truck PDF** reports.
+- **Enterprise Landing & Hardware Showcase (`http://localhost:3000/`)**:
+  - Custom SVG favicon (`frontend/app/icon.svg`), animated `<TruckHero />`, **ColdChain Sentinel X1** product image + interactive 3D Three.js model, and an interactive Canvas-rendered map of **4,934** cold-storage warehouses across India (sourced from `GeoIndiaHandlerGis.ashx` → `frontend/public/data/warehouses.json`).
+- **3-Role Trip Dispatch & Live Tracking**:
+  - **Admin (`/admin/trips`)**, **Company / Owner (`/owner/trips`)**, and **Driver (`/truck` → `+ Assign Trip`)** can all assign trips (`Origin → Destination`, `Cargo Type`), start trips, stream live browser GPS, and view route navigation.
+- **Dual-LSTM AI/ML & 1-Minute Neon DB Pipeline**:
+  - `SpoilageLSTM` predicts `spoilage_risk`, `spoilage_risk_level`, `shelf_life_remaining_hours`, `quality_retention_pct`, and **Good vs. Bad Environment** remaining shelf-life.
+  - `InsuranceLSTM` evaluates thermal excursions, door-seal events, and trip history anchored on Admin-configured base prices (`₹/mo`) to compute dynamic monthly premiums.
+  - `IotService` persists 1-minute `SpoilageLSTM` + `InsuranceLSTM` snapshots to `trip_telemetry_history` in Neon Postgres and updates `iot_devices.last_seen` on every sensor ingest.
+- **Real-Time 4-Second Telemetry Sync**:
+  - Both Owner (`/owner/trucks/[id]`) and Driver (`/truck`) poll live telemetry every **4 seconds**, matching the IoT Simulator's auto-stream cadence.
 
 ---
 
-## Getting Started
+## Local Development
 
 ### 1. Prerequisites
 - **Node.js** 18+ and **npm**
@@ -103,6 +100,16 @@ npm run dev:frontend
 
 ---
 
+## Production Deployment (Render + Vercel + Netlify)
+
+Full step-by-step instructions and environment variable tables are in [`DEPLOYMENT.md`](./DEPLOYMENT.md):
+
+- **Backends (`backend/` & `ai-ml/`) on Render**: Configured via [`render.yaml`](./render.yaml) Blueprint.
+- **Frontends (`frontend/` & `iot/`) on Vercel**: Configured via [`frontend/vercel.json`](./frontend/vercel.json) and [`iot/vercel.json`](./iot/vercel.json).
+- **Frontends (`frontend/` & `iot/`) on Netlify**: Configured via [`frontend/netlify.toml`](./frontend/netlify.toml) and [`iot/netlify.toml`](./iot/netlify.toml).
+
+---
+
 ## Demo Accounts
 
 All seeded demo accounts use password `password123`:
@@ -118,11 +125,13 @@ All seeded demo accounts use password `password123`:
 ## Key API Endpoints
 
 ### Backend (`http://localhost:4000`)
-- `POST /api/auth/login`, `POST /api/auth/register`, `GET /api/auth/me`, `POST /api/auth/logout`
+- `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/logout`
+- `GET /api/neon/health` — Database health check
 - `GET /api/admin/metrics`, `GET|POST /api/admin/owners`, `GET|POST|PATCH|DELETE /api/admin/trucks`, `GET /api/admin/lstm-logs`
 - `GET|POST /api/owner/trucks`, `GET|POST /api/owner/drivers`, `PATCH /api/owner/trucks/:id/target-temp`, `GET /api/owner/lstm-logs`
-- `GET /api/truck/my-truck`, `GET /api/truck/active-trip`, `POST /api/truck/start-trip`, `POST /api/truck/end-trip/:tripId`, `PATCH /api/truck/target-temp`, `GET /api/truck/telemetry`
-- `POST /api/iot/ingest`, `GET /api/iot/telemetry/:truckId`, `GET /api/iot/history/:truckId`, `POST /api/iot/insurance/:truckId/recalculate`
+- `GET|POST /api/trips`, `GET /api/trips/resources`, `PATCH /api/trips/:id/reopen`
+- `GET /api/truck/my-truck`, `GET /api/truck/assigned-trip`, `POST /api/truck/assign-trip`, `POST /api/truck/start-trip`, `PATCH /api/truck/trips/:tripId/complete`, `PATCH /api/truck/target-temp`, `GET /api/truck/telemetry`
+- `POST /api/iot/devices/registry-sync`, `POST /api/iot/ingest`, `GET /api/iot/telemetry/:truckId`, `GET /api/iot/history/:truckId`, `POST /api/iot/insurance/:truckId/recalculate`
 
 ### AI/ML Service (`http://localhost:8000`)
 - `GET /health` — Service & LSTM model load status
