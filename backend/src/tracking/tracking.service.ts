@@ -3,6 +3,8 @@ import {
   ForbiddenException,
   BadRequestException,
   NotFoundException,
+  Logger,
+  OnModuleInit,
 } from '@nestjs/common';
 import { NeonService } from '../neon/neon.service';
 import { TrackingGateway } from './tracking.gateway';
@@ -48,11 +50,54 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
 }
 
 @Injectable()
-export class TrackingService {
+export class TrackingService implements OnModuleInit {
+  private readonly logger = new Logger(TrackingService.name);
+
   constructor(
     private readonly neonService: NeonService,
     private readonly trackingGateway: TrackingGateway,
   ) { }
+
+  async onModuleInit() {
+    await this.ensureTrackingTables();
+  }
+
+  private async ensureTrackingTables() {
+    const sql = this.neonService.getSql();
+    if (!sql) return;
+    try {
+      await sql`
+        CREATE TABLE IF NOT EXISTS truck_locations (
+          truck_id UUID PRIMARY KEY REFERENCES trucks(id) ON DELETE CASCADE,
+          latitude NUMERIC(10,7) NOT NULL,
+          longitude NUMERIC(10,7) NOT NULL,
+          speed_kmh NUMERIC(5,2) DEFAULT 0,
+          heading NUMERIC(5,2) DEFAULT 0,
+          accuracy_m NUMERIC(8,2),
+          recorded_at TIMESTAMP NOT NULL,
+          received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+      `;
+      await sql`
+        CREATE TABLE IF NOT EXISTS truck_location_history (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          truck_id UUID NOT NULL REFERENCES trucks(id) ON DELETE CASCADE,
+          latitude NUMERIC(10,7) NOT NULL,
+          longitude NUMERIC(10,7) NOT NULL,
+          speed_kmh NUMERIC(5,2) DEFAULT 0,
+          heading NUMERIC(5,2) DEFAULT 0,
+          accuracy_m NUMERIC(8,2),
+          recorded_at TIMESTAMP NOT NULL,
+          received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+      `;
+      await sql`
+        CREATE INDEX IF NOT EXISTS idx_truck_loc_history_truck_time ON truck_location_history(truck_id, recorded_at DESC);
+      `;
+    } catch (e: any) {
+      this.logger.warn(`Could not ensure tracking tables: ${e.message}`);
+    }
+  }
 
   private get sql() {
     const s = this.neonService.getSql();

@@ -76,7 +76,15 @@ export class TrackingGateway
       return;
     }
 
-    const currentUser = await this.authService.getMe(user.sub);
+    let currentUser: JwtPayload | null = null;
+    try {
+      currentUser = await this.authService.getMe(user.sub);
+    } catch (err: any) {
+      this.logger.warn(`Client ${client.id} auth lookup failed: ${err?.message || err}`);
+      client.emit('error', { message: 'Authentication service temporarily unavailable.' });
+      client.disconnect(true);
+      return;
+    }
     if (!currentUser) {
       client.emit('error', { message: 'Authenticated account is unavailable.' });
       client.disconnect(true);
