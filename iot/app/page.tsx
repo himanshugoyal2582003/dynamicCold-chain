@@ -300,13 +300,23 @@ export default function IoTPortalPage() {
           <h2>Sensors & Health</h2>
           <div className="metric-row">
             <span className="muted">Warnings / Excursions</span>
-            <span className="metric-value" style={{ color: summary.warningCount > 0 ? '#fbbf24' : '#34d399' }}>
-              {summary.warningCount}
+            <span
+              className="metric-value"
+              style={{
+                color: devices.some((d) => d.status === 'warning') ? '#fbbf24' : '#34d399',
+              }}
+            >
+              {devices.filter((d) => d.status === 'warning').length}
             </span>
           </div>
           <div className="metric-row">
             <span className="muted">Average temp</span>
-            <span className="metric-value">{summary.avgTemp}°C</span>
+            <span className="metric-value">
+              {devices.length
+                ? (devices.reduce((acc, d) => acc + d.temp, 0) / devices.length).toFixed(1)
+                : summary.avgTemp}
+              °C
+            </span>
           </div>
         </div>
 
@@ -326,8 +336,9 @@ export default function IoTPortalPage() {
       {/* Multi-Device Cards Grid */}
       <section className="device-grid">
         {devices.map((device) => {
-          const isWarning = device.temp > device.targetTemp + 2.0 || device.doorOpen;
-          const isCritical = device.temp > device.targetTemp + 6.0;
+          const tempDeviation = Math.abs(device.temp - device.targetTemp);
+          const isWarning = tempDeviation > 2.0 || device.doorOpen;
+          const isCritical = tempDeviation > 6.0;
 
           return (
             <div key={device.id} className="device-card" style={{ opacity: device.powerOn ? 1 : 0.65 }}>

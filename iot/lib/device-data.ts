@@ -170,14 +170,31 @@ export function createNewDevice(params: {
   const store = getDeviceStore();
   const nextNum = store.length + 1;
   const prod = PRODUCT_OPTIONS.find((p) => p.name === params.productType) || PRODUCT_OPTIONS[0];
+  const existingIds = new Set(store.map((d) => d.id));
+  const existingConns = new Set(store.map((d) => d.connectionNumber));
+
+  let idSuffix = nextNum;
+  while (existingIds.has(`DEV-ESP32-${String(idSuffix).padStart(2, '0')}`)) {
+    idSuffix++;
+  }
+
+  let conn = generateConnNumber(store.length);
+  while (existingConns.has(conn)) {
+    conn = generateConnNumber();
+  }
+
+  const validTargetTemp =
+    typeof params.targetTemp === 'number' && Number.isFinite(params.targetTemp)
+      ? params.targetTemp
+      : prod.targetTemp;
 
   const newDevice: IoTDevice = {
-    id: `DEV-ESP32-${String(nextNum).padStart(2, '0')}`,
-    name: params.name || `ESP32 Sensor Unit #${nextNum}`,
-    connectionNumber: generateConnNumber(store.length),
+    id: `DEV-ESP32-${String(idSuffix).padStart(2, '0')}`,
+    name: params.name || `ESP32 Sensor Unit #${idSuffix}`,
+    connectionNumber: conn,
     productType: prod.name,
-    targetTemp: params.targetTemp !== undefined ? params.targetTemp : prod.targetTemp,
-    temp: params.targetTemp !== undefined ? params.targetTemp : prod.targetTemp,
+    targetTemp: validTargetTemp,
+    temp: validTargetTemp,
     humidity: 65 + Math.floor(Math.random() * 10),
     battery: 95 - Math.floor(Math.random() * 10),
     doorOpen: false,
