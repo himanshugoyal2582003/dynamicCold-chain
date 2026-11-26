@@ -5,7 +5,8 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
-import { AuthService, JwtPayload } from '../auth/auth.service';
+import { AuthService } from '../auth/auth.service';
+import { NeonService } from '../neon/neon.service';
 
 // Extend Express Request to carry user payload
 declare global {
@@ -35,7 +36,10 @@ export function extractJwtToken(req: Request): string | null {
 
 @Injectable()
 export class AuthGuardMiddleware implements NestMiddleware {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly neonService: NeonService,
+  ) {}
 
   async use(req: Request, _res: Response, next: NextFunction) {
     const token = extractJwtToken(req);
@@ -43,7 +47,31 @@ export class AuthGuardMiddleware implements NestMiddleware {
 
     let verifiedUser: JwtPayload;
     try {
-      verifiedUser = this.authService.verifyToken(token);
+      const payload = this.authService.verifyToken(token);
+      req.user = payload;
+
+      // For truckUser: always refresh truckId from DB so that
+      // truck assignments made after login take effect immediately
+      // without requiring the driver to re-login.
+      if (payload.role === 'truckUser') {
+        try {
+          const sql = this.neonService.getSql();
+          if (sql) {
+            const rows = await sql(
+              `SELECT truck_id, owner_id FROM users WHERE id = $1 AND active = true LIMIT 1`,
+              [payload.sub],
+            );
+            if (rows && rows.length > 0) {
+              req.user.truckId = rows[0].truck_id || null;
+              req.user.ownerId = rows[0].owner_id || null;
+            }
+          }
+        } catch {
+          // If DB lookup fails, fall through with JWT value
+        }
+      }
+
+      next();
     } catch {
       throw new UnauthorizedException('Invalid or expired session.');
     }

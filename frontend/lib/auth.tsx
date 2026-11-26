@@ -120,7 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (loading) return;
 
-    const publicRoutes = ['/', '/login'];
+    const publicRoutes = ['/', '/login', '/signup'];
     const isPublic = publicRoutes.includes(pathname);
 
     if (!user && !isPublic) {
