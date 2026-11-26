@@ -90,6 +90,26 @@ export class DriverTripsController {
     return { success: true, trip: await this.trips.getDriverTrip(user.sub, user.truckId) };
   }
 
+  @Post('assign-trip')
+  async assign(@Req() req: Request, @Body() body: any) {
+    const user = this.assertDriver(req);
+    if (!user.truckId) throw new ForbiddenException('No truck is assigned to your account.');
+    if (!body || typeof body.origin !== 'string' || typeof body.destination !== 'string' || typeof body.cargo_type !== 'string') {
+      throw new BadRequestException('Origin, destination, and cargo_type are required.');
+    }
+    if (body.notes !== undefined && body.notes !== null && typeof body.notes !== 'string') {
+      throw new BadRequestException('Shipment notes must be text.');
+    }
+    return this.trips.createTrip(user, {
+      truck_id: user.truckId,
+      user_id: user.sub,
+      origin: body.origin,
+      destination: body.destination,
+      cargo_type: body.cargo_type,
+      notes: body.notes,
+    });
+  }
+
   @Post('start-trip')
   async start(@Req() req: Request) {
     const user = this.assertDriver(req);

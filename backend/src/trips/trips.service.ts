@@ -50,10 +50,13 @@ export class TripsService {
     return { trucks, drivers };
   }
 
-  async createTrip(actor: { sub: string; role: string }, input: {
+  async createTrip(actor: { sub: string; role: string; truckId?: string | null }, input: {
     truck_id: string; user_id: string; origin: string; destination: string; cargo_type: string; notes?: string;
   }) {
-    if (!['admin', 'owner'].includes(actor.role)) throw new ForbiddenException('Only administrators and fleet owners can assign trips.');
+    if (!['admin', 'owner', 'truckUser'].includes(actor.role)) throw new ForbiddenException('Only administrators, fleet owners, and assigned drivers can assign trips.');
+    if (actor.role === 'truckUser' && (!actor.truckId || input.truck_id !== actor.truckId || input.user_id !== actor.sub)) {
+      throw new ForbiddenException('Drivers can only assign trips to their own assigned truck.');
+    }
     if (typeof input.origin !== 'string' || typeof input.destination !== 'string' || typeof input.cargo_type !== 'string') {
       throw new BadRequestException('Origin, destination, and cargo_type are required.');
     }

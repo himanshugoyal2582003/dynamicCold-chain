@@ -56,7 +56,7 @@ export class TruckService {
 
   async getActiveTrip(truckId: string) {
     const rows = await this.sql(
-      `SELECT * FROM trips WHERE truck_id = $1 AND (status = 'IN_PROGRESS' OR (status IS NULL AND ended_at IS NULL)) ORDER BY started_at DESC LIMIT 1`,
+      `SELECT * FROM trips WHERE truck_id = $1 AND (status IN ('ASSIGNED', 'IN_PROGRESS') OR (status IS NULL AND ended_at IS NULL)) ORDER BY started_at DESC NULLS LAST, assigned_at DESC LIMIT 1`,
       [truckId],
     );
     return rows[0] || null;
