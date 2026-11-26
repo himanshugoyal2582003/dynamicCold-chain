@@ -85,6 +85,20 @@ export class IotService implements OnModuleInit, OnModuleDestroy {
       await sql`ALTER TABLE trips ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'IN_PROGRESS';`;
       await sql`ALTER TABLE trips ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;`;
       await sql`UPDATE trips SET status = CASE WHEN ended_at IS NULL THEN 'IN_PROGRESS' ELSE 'COMPLETED' END WHERE status IS NULL;`;
+      await sql`
+        CREATE TABLE IF NOT EXISTS iot_devices (
+          device_id VARCHAR(50) PRIMARY KEY,
+          connection_number VARCHAR(50) UNIQUE NOT NULL,
+          name VARCHAR(150) NOT NULL,
+          product_type VARCHAR(120) DEFAULT 'Cold Cargo',
+          battery NUMERIC(5,2),
+          power_on BOOLEAN DEFAULT true,
+          reported_status VARCHAR(30) DEFAULT 'online',
+          last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          active BOOLEAN DEFAULT true,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+      `;
     } catch (e: any) {
       this.logger.warn(`Could not ensure IoT/LSTM schema columns: ${e.message}`);
     }

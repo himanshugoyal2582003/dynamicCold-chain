@@ -120,6 +120,22 @@ async function initDb() {
     );
   `;
 
+  // IoT Devices registry table
+  await sql`
+    CREATE TABLE IF NOT EXISTS iot_devices (
+      device_id VARCHAR(50) PRIMARY KEY,
+      connection_number VARCHAR(50) UNIQUE NOT NULL,
+      name VARCHAR(150) NOT NULL,
+      product_type VARCHAR(120) DEFAULT 'Cold Cargo',
+      battery NUMERIC(5,2),
+      power_on BOOLEAN DEFAULT true,
+      reported_status VARCHAR(30) DEFAULT 'online',
+      last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      active BOOLEAN DEFAULT true,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `;
+
   // Issues table
   await sql`
     CREATE TABLE IF NOT EXISTS issues (
