@@ -7,7 +7,7 @@ export default function IoTPortalPage() {
   const [devices, setDevices] = useState<IoTDevice[]>([]);
   const [summary, setSummary] = useState<any>({ totalDevices: 0, onlineCount: 0, warningCount: 0, avgTemp: '0.0' });
   const [loading, setLoading] = useState(true);
-  const [autoStream, setAutoStream] = useState(false);
+  const [autoStream, setAutoStream] = useState(true);
   const [streamIntervalMs, setStreamIntervalMs] = useState(4000);
   const [logs, setLogs] = useState<string[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
