@@ -4,11 +4,39 @@ import { useAuth } from '@/lib/auth';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ReactNode } from 'react';
+import {
+  AlertTriangle,
+  Building2,
+  ClipboardList,
+  History,
+  LayoutDashboard,
+  MapPin,
+  Route,
+  Shield,
+  Truck,
+  User,
+} from 'lucide-react';
 
 interface NavItem {
   href: string;
   label: string;
   icon: string;
+}
+
+function renderNavIcon(item: NavItem, className: string) {
+  const [path, query] = item.href.split('?');
+  if (query?.includes('tab=insurance') || path.endsWith('/insurance')) {
+    return <Shield className={className} strokeWidth={1.8} />;
+  }
+  if (path.endsWith('/tracking')) return <MapPin className={className} strokeWidth={1.8} />;
+  if (path.endsWith('/trips')) return <Route className={className} strokeWidth={1.8} />;
+  if (path.endsWith('/owners')) return <Building2 className={className} strokeWidth={1.8} />;
+  if (path.endsWith('/users') || path.endsWith('/drivers')) return <User className={className} strokeWidth={1.8} />;
+  if (path.endsWith('/activity')) return <ClipboardList className={className} strokeWidth={1.8} />;
+  if (path.endsWith('/history')) return <History className={className} strokeWidth={1.8} />;
+  if (path.endsWith('/issues')) return <AlertTriangle className={className} strokeWidth={1.8} />;
+  if (path === '/admin') return <LayoutDashboard className={className} strokeWidth={1.8} />;
+  return <Truck className={className} strokeWidth={1.8} />;
 }
 
 interface DashboardLayoutProps {
@@ -69,7 +97,7 @@ export default function DashboardLayout({ children, navItems, title, roleLabel }
                 : undefined}
               className={`sidebar-link ${isActive(item.href) ? 'active' : ''}`}
             >
-              <span className="text-base">{item.icon}</span>
+              {renderNavIcon(item, 'w-4 h-4 shrink-0')}
               <span>{item.label}</span>
             </Link>
           ))}
@@ -126,7 +154,7 @@ export default function DashboardLayout({ children, navItems, title, roleLabel }
               className="flex min-w-[76px] flex-1 flex-col items-center py-2 text-[11px] leading-tight gap-1"
               style={{ color: isActive(item.href) ? 'var(--color-gold)' : 'var(--color-slate)' }}
             >
-              <span className="text-lg">{item.icon}</span>
+              {renderNavIcon(item, 'w-5 h-5 shrink-0')}
               <span>{item.label}</span>
             </Link>
           ))}
