@@ -21,16 +21,27 @@ interface DashboardLayoutProps {
 export default function DashboardLayout({ children, navItems, title, roleLabel }: DashboardLayoutProps) {
   const { user, logout } = useAuth();
   const pathname = usePathname();
+  const isActive = (href: string) => {
+    const [itemPath, itemQuery] = href.split('?');
+    const searchParams = new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search);
+    if (pathname === itemPath && itemQuery) {
+      return new URLSearchParams(itemQuery).toString() === searchParams.toString();
+    }
+    if (pathname === itemPath) {
+      return !(itemPath === '/owner' && searchParams.get('tab') === 'insurance');
+    }
+    return pathname.startsWith(itemPath + '/') &&
+      !(itemPath === '/owner' && pathname.startsWith('/owner/drivers'));
+  };
 
   return (
     <div className="min-h-screen flex" style={{ background: 'var(--color-ivory)' }}>
       {/* Sidebar */}
       <aside
-        className="hidden md:flex flex-col w-64 border-r"
+        className="no-print fixed inset-y-0 left-0 z-40 hidden h-dvh w-64 flex-col overflow-y-auto border-r md:flex"
         style={{
           background: 'var(--color-paper)',
           borderColor: 'var(--color-hairline)',
-          minHeight: '100vh',
         }}
       >
         {/* Logo */}
@@ -50,7 +61,13 @@ export default function DashboardLayout({ children, navItems, title, roleLabel }
             <Link
               key={item.href}
               href={item.href}
-              className={`sidebar-link ${pathname === item.href || pathname.startsWith(item.href + '/') ? 'active' : ''}`}
+              onClick={item.href.includes('?') || (item.href === '/owner' && pathname === '/owner')
+                ? (event) => {
+                    event.preventDefault();
+                    window.location.assign(item.href);
+                  }
+                : undefined}
+              className={`sidebar-link ${isActive(item.href) ? 'active' : ''}`}
             >
               <span className="text-base">{item.icon}</span>
               <span>{item.label}</span>
@@ -59,7 +76,7 @@ export default function DashboardLayout({ children, navItems, title, roleLabel }
         </nav>
 
         {/* User footer */}
-        <div className="p-4 border-t" style={{ borderColor: 'var(--color-hairline)' }}>
+        <div className="mt-auto shrink-0 p-4 border-t" style={{ borderColor: 'var(--color-hairline)' }}>
           <p className="text-xs font-medium mb-1" style={{ color: 'var(--color-ink)' }}>{user?.name}</p>
           <p className="text-xs mb-3" style={{ color: 'var(--color-slate)' }}>{user?.email}</p>
           <button onClick={() => logout()} className="btn-ghost w-full text-xs">Sign out</button>
@@ -67,10 +84,10 @@ export default function DashboardLayout({ children, navItems, title, roleLabel }
       </aside>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col min-h-screen">
+      <div className="flex min-h-screen min-w-0 flex-1 flex-col pb-16 md:pb-0 md:pl-64">
         {/* Mobile header */}
         <header
-          className="md:hidden flex items-center justify-between p-4 border-b"
+          className="no-print md:hidden flex items-center justify-between p-4 border-b"
           style={{ background: 'var(--color-paper)', borderColor: 'var(--color-hairline)' }}
         >
           <div className="flex items-center gap-2">
@@ -82,26 +99,32 @@ export default function DashboardLayout({ children, navItems, title, roleLabel }
 
         {/* Page header */}
         <div
-          className="px-6 py-5 border-b"
+          className="px-4 py-4 border-b sm:px-6 sm:py-5"
           style={{ background: 'var(--color-paper)', borderColor: 'var(--color-hairline)' }}
         >
           <h1 className="text-xl font-semibold" style={{ color: 'var(--color-ink)' }}>{title}</h1>
         </div>
 
         {/* Page body */}
-        <main className="flex-1 p-6">{children}</main>
+        <main className="min-w-0 flex-1 p-4 sm:p-6">{children}</main>
 
         {/* Mobile bottom nav */}
         <nav
-          className="md:hidden flex border-t"
+          className="no-print fixed inset-x-0 bottom-0 z-40 flex overflow-x-auto border-t md:hidden"
           style={{ background: 'var(--color-paper)', borderColor: 'var(--color-hairline)' }}
         >
           {navItems.map((item) => (
             <Link
               key={item.href}
               href={item.href}
-              className="flex-1 flex flex-col items-center py-3 text-xs gap-1"
-              style={{ color: pathname === item.href ? 'var(--color-gold)' : 'var(--color-slate)' }}
+              onClick={item.href.includes('?') || (item.href === '/owner' && pathname === '/owner')
+                ? (event) => {
+                    event.preventDefault();
+                    window.location.assign(item.href);
+                  }
+                : undefined}
+              className="flex min-w-[76px] flex-1 flex-col items-center py-2 text-[11px] leading-tight gap-1"
+              style={{ color: isActive(item.href) ? 'var(--color-gold)' : 'var(--color-slate)' }}
             >
               <span className="text-lg">{item.icon}</span>
               <span>{item.label}</span>
