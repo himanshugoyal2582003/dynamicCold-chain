@@ -84,7 +84,7 @@ export class IotService implements OnModuleInit, OnModuleDestroy {
       await sql`ALTER TABLE trip_telemetry_history ADD COLUMN IF NOT EXISTS model_type VARCHAR(50);`;
       await sql`ALTER TABLE trips ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'IN_PROGRESS';`;
       await sql`ALTER TABLE trips ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;`;
-      await sql`UPDATE trips SET status = CASE WHEN ended_at IS NULL THEN 'IN_PROGRESS' ELSE 'COMPLETED' END WHERE status IS NULL;`;
+      await sql`UPDATE trips SET status = CASE WHEN ended_at IS NULL THEN 'IN_PROGRESS' ELSE 'COMPLETED' END WHERE status IS NULL OR (ended_at IS NOT NULL AND status IN ('ASSIGNED', 'IN_PROGRESS'));`;
       await sql`
         CREATE TABLE IF NOT EXISTS iot_devices (
           device_id VARCHAR(50) PRIMARY KEY,
@@ -380,6 +380,17 @@ export class IotService implements OnModuleInit, OnModuleDestroy {
     }
 
     this.telemetryByConnection.set(conn, payload);
+    if (sql && source === 'sensor') {
+      sql`UPDATE iot_devices
+          SET last_seen = NOW(),
+              battery = COALESCE(${payload.battery ?? null}, battery),
+              reported_status = ${payload.status || 'online'},
+              power_on = true,
+              updated_at = NOW()
+          WHERE UPPER(connection_number) = ${conn};`.catch((e: any) => {
+        this.logger.debug(`Could not update iot_devices last_seen for ${conn}: ${e.message}`);
+      });
+    }
     return {
       success: true,
       connection_number: conn,
