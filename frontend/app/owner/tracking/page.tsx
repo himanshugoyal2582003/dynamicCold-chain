@@ -16,7 +16,9 @@ const FleetMap = dynamic(() => import('@/components/tracking/FleetMap'), { ssr: 
 
 const NAV = [
   { href: '/owner', label: 'My Fleet', icon: '🚛' },
+  { href: '/owner/trips', label: 'Trip Management', icon: '🛣️' },
   { href: '/owner/tracking', label: 'Live Tracking', icon: '📍' },
+  { href: '/owner?tab=insurance', label: 'Insurance', icon: '🛡️' },
   { href: '/owner/drivers', label: 'Drivers', icon: '👤' },
 ];
 
