@@ -13,13 +13,14 @@ const NAV = [
   { href: '/admin/trips', label: 'Trips', icon: '🛣️' },
   { href: '/admin/owners', label: 'Owners', icon: '🏢' },
   { href: '/admin/trucks', label: 'Trucks', icon: '🚛' },
+  { href: '/admin/insurance', label: 'LSTM Insurance', icon: '🛡️' },
   { href: '/admin/users', label: 'Drivers', icon: '👤' },
   { href: '/admin/activity', label: 'Activity Log', icon: '📋' },
 ];
 
 const BLANK_FORM = {
   owner_id: '', plate_number: '', type: 'Refrigerated Semi 10T',
-  capacity_tons: '10', target_temp_c: '4',
+  capacity_tons: '10', target_temp_c: '4', base_insurance_price: '450',
   insurance_expiry: '', permit_expiry: '', fitness_expiry: '',
 };
 
@@ -184,6 +185,7 @@ export default function AdminTrucks() {
           ...form,
           capacity_tons: parseFloat(form.capacity_tons),
           target_temp_c: parseFloat(form.target_temp_c),
+          base_insurance_price: parseFloat(form.base_insurance_price) || 450,
         }),
       });
       setSuccess('Truck created successfully.');
@@ -197,11 +199,11 @@ export default function AdminTrucks() {
     }
   }
 
-  async function handleDeactivate(id: string, plate: string) {
-    if (!confirm(`Deactivate truck "${plate}"?`)) return;
+  async function handleDelete(id: string, plate: string) {
+    if (!confirm(`Delete truck "${plate}"? Its active trip will end and its driver will be unassigned.`)) return;
     try {
-      await apiFetch(`/api/admin/trucks/${id}/deactivate`, { method: 'PATCH' });
-      setSuccess(`Truck "${plate}" deactivated.`);
+      await apiFetch(`/api/admin/trucks/${id}`, { method: 'DELETE' });
+      setSuccess(`Truck "${plate}" deleted.`);
       fetchAll();
     } catch (e: any) {
       setError(e.message);
@@ -283,18 +285,8 @@ export default function AdminTrucks() {
                     <td><DocTag date={t.fitness_expiry} /></td>
                     <td>
                       {t.active && (
-                        <button className="btn-ghost mr-2" onClick={() => setAssignTruck(t)}>
-                          {t.driver_name ? 'Reassign Driver' : 'Assign Driver'}
-                        </button>
-                      )}
-                      {t.active && (
-                        <button className="btn-ghost mr-2" onClick={() => setIotTruck(t)}>
-                          IoT Device
-                        </button>
-                      )}
-                      {t.active && (
-                        <button className="btn-danger" onClick={() => handleDeactivate(t.id, t.plate_number)}>
-                          Deactivate
+                        <button className="btn-danger" onClick={() => handleDelete(t.id, t.plate_number)}>
+                          Delete
                         </button>
                       )}
                     </td>
@@ -330,6 +322,7 @@ export default function AdminTrucks() {
               { label: 'Truck Type', key: 'type', placeholder: 'Refrigerated Semi 10T' },
               { label: 'Capacity (tons)', key: 'capacity_tons', placeholder: '10.5' },
               { label: 'Target Temp (°C)', key: 'target_temp_c', placeholder: '4.0' },
+              { label: 'Base Insurance Price ($/mo)', key: 'base_insurance_price', placeholder: '450.00' },
               { label: 'Insurance Expiry', key: 'insurance_expiry', type: 'date' },
               { label: 'Permit Expiry', key: 'permit_expiry', type: 'date' },
               { label: 'Fitness Expiry', key: 'fitness_expiry', type: 'date' },

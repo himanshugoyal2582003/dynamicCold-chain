@@ -13,6 +13,7 @@ const NAV = [
   { href: '/admin/trips', label: 'Trips', icon: '🛣️' },
   { href: '/admin/owners', label: 'Owners', icon: '🏢' },
   { href: '/admin/trucks', label: 'Trucks', icon: '🚛' },
+  { href: '/admin/insurance', label: 'LSTM Insurance', icon: '🛡️' },
   { href: '/admin/users', label: 'Drivers', icon: '👤' },
   { href: '/admin/activity', label: 'Activity Log', icon: '📋' },
 ];

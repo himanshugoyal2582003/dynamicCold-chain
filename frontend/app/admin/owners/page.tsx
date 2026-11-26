@@ -12,6 +12,7 @@ const NAV = [
   { href: '/admin/trips', label: 'Trips', icon: '🛣️' },
   { href: '/admin/owners', label: 'Owners', icon: '🏢' },
   { href: '/admin/trucks', label: 'Trucks', icon: '🚛' },
+  { href: '/admin/insurance', label: 'LSTM Insurance', icon: '🛡️' },
   { href: '/admin/users', label: 'Drivers', icon: '👤' },
   { href: '/admin/activity', label: 'Activity Log', icon: '📋' },
 ];
@@ -65,11 +66,11 @@ export default function AdminOwners() {
     }
   }
 
-  async function handleDeactivate(id: string, name: string) {
-    if (!confirm(`Deactivate owner "${name}"? This will remove their access.`)) return;
+  async function handleDelete(id: string, name: string) {
+    if (!confirm(`Delete owner "${name}"? Their drivers and trucks will also be deactivated.`)) return;
     try {
-      await apiFetch(`/api/admin/owners/${id}/deactivate`, { method: 'PATCH' });
-      setSuccess(`Owner "${name}" deactivated.`);
+      await apiFetch(`/api/admin/owners/${id}`, { method: 'DELETE' });
+      setSuccess(`Owner "${name}" and their fleet were deleted.`);
       fetchOwners();
     } catch (e: any) {
       setError(e.message);
@@ -132,9 +133,9 @@ export default function AdminOwners() {
                       {o.active && (
                         <button
                           className="btn-danger"
-                          onClick={() => handleDeactivate(o.id, o.name)}
+                          onClick={() => handleDelete(o.id, o.name)}
                         >
-                          Deactivate
+                          Delete
                         </button>
                       )}
                     </td>
