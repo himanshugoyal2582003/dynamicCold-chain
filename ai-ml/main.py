@@ -280,7 +280,7 @@ def process_iot_telemetry(req: RawIoTTelemetry):
             f"{backend_url}/api/iot/ingest",
             json=processed.model_dump(),
             headers={"x-iot-ingest-secret": BACKEND_INGEST_SECRET},
-            timeout=2.0,
+            timeout=5.0,
         )
     except Exception as e:
         logger.debug(f"Could not forward to backend at {backend_url}/api/iot/ingest: {e}")

@@ -227,7 +227,7 @@ class ColdChainLSTMEngine:
                 enriched_items = [enriched_items[0]] * (SEQ_LEN - len(enriched_items)) + enriched_items
             seq_tensor = torch.from_numpy(np.array([enriched_items[-SEQ_LEN:]], dtype=np.float32))
         else:
-            seq_tensor = torch.from_numpy(np.array([[step_vec] * SEQ_LEN], dtype=torch.float32))
+            seq_tensor = torch.from_numpy(np.array([[step_vec] * SEQ_LEN], dtype=np.float32))
 
         if self.insurance_loaded:
             with torch.no_grad():
