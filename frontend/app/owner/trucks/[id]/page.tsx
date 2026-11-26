@@ -107,9 +107,12 @@ export default function TruckDetail() {
     setFetching(true);
     setError('');
     try {
-      const [t, tr] = await Promise.all([
+      const [t, tr, d, iot, hist] = await Promise.all([
         apiFetch(`/api/owner/trucks/${id}`),
         apiFetch(`/api/owner/trucks/${id}/trips`),
+        apiFetch('/api/owner/drivers').catch(() => []),
+        apiFetch(`/api/iot/telemetry/${id}`).catch(() => null),
+        apiFetch(`/api/iot/history/${id}`).catch(() => []),
       ]);
       setTruck(t);
       if (t?.target_temp_c !== undefined && t?.target_temp_c !== null) {
@@ -362,10 +365,14 @@ export default function TruckDetail() {
                 </div>
                 <div className="py-2 flex justify-between items-center">
                   <span className="text-xs text-slate-600">Paired IoT Sensor</span>
-                  {truck.iot_connection_number ? (
-                    <span className="font-mono text-xs font-bold text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-500/30">
-                      {truck.iot_connection_number}
-                    </span>
+                  <div className="flex items-center gap-2">
+                    {truck.iot_connection_number ? (
+                      <span className="font-mono text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                        {truck.iot_connection_number}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-slate-400">None</span>
+                    )}
                     <button type="button" className="btn-ghost text-xs" onClick={() => setShowIotManager(true)}>Manage</button>
                   </div>
                 </div>

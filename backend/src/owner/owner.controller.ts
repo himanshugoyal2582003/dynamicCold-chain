@@ -1,5 +1,6 @@
 import {
-  Controller, Get, Patch, Post, Delete, Body, Param, Req, UnauthorizedException, ForbiddenException,
+  Controller, Get, Patch, Post, Delete, Body, Param, Req,
+  BadRequestException, UnauthorizedException, ForbiddenException,
 } from '@nestjs/common';
 import { Request } from 'express';
 import { OwnerService } from './owner.service';

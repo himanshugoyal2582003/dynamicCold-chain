@@ -45,7 +45,6 @@ export class AuthGuardMiddleware implements NestMiddleware {
     const token = extractJwtToken(req);
     if (!token) throw new UnauthorizedException('Authentication required. Missing token in cookie or Authorization header.');
 
-    let verifiedUser: JwtPayload;
     try {
       const payload = this.authService.verifyToken(token);
       req.user = payload;
@@ -75,13 +74,6 @@ export class AuthGuardMiddleware implements NestMiddleware {
     } catch {
       throw new UnauthorizedException('Invalid or expired session.');
     }
-
-    // The signed token proves identity, but mutable assignment and role data
-    // must come from PostgreSQL so existing sessions see reassignment changes.
-    const currentUser = await this.authService.getMe(verifiedUser.sub);
-    if (!currentUser) throw new UnauthorizedException('User not found or inactive.');
-    req.user = currentUser;
-    next();
   }
 }
 

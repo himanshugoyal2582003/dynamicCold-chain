@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, OnModuleDestroy, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
 import { NeonService } from '../neon/neon.service';
 
 export interface EnrichedIoTTelemetry {
@@ -60,13 +60,31 @@ export class IotService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit() {
     await this.ensureIotColumn();
-    // Keep active trips fed from the AI/ML simulator even when no physical
-    // sensor is paired. ingest() exposes the latest reading and stores a DB
-    // snapshot every 15 minutes.
     this.tripTelemetryTimer = setInterval(() => {
       void this.captureActiveTripTelemetry();
     }, 5000);
     void this.captureActiveTripTelemetry();
+  }
+
+  private async ensureIotColumn() {
+    const sql = this.neonService.getSql();
+    if (!sql) return;
+    try {
+      await sql`ALTER TABLE trucks ADD COLUMN IF NOT EXISTS iot_connection_number VARCHAR(50);`;
+      await sql`ALTER TABLE trucks ADD COLUMN IF NOT EXISTS base_insurance_price NUMERIC(8,2) DEFAULT 450.00;`;
+      await sql`ALTER TABLE trucks ADD COLUMN IF NOT EXISTS current_insurance_price NUMERIC(8,2) DEFAULT 450.00;`;
+      await sql`ALTER TABLE trucks ADD COLUMN IF NOT EXISTS insurance_risk_score NUMERIC(5,2) DEFAULT 15.0;`;
+      await sql`ALTER TABLE trucks ADD COLUMN IF NOT EXISTS insurance_status VARCHAR(20) DEFAULT 'discounted';`;
+      await sql`ALTER TABLE trip_telemetry_history ADD COLUMN IF NOT EXISTS good_env_rsl_hours NUMERIC(6,2);`;
+      await sql`ALTER TABLE trip_telemetry_history ADD COLUMN IF NOT EXISTS bad_env_rsl_hours NUMERIC(6,2);`;
+      await sql`ALTER TABLE trip_telemetry_history ADD COLUMN IF NOT EXISTS environment_condition VARCHAR(30);`;
+      await sql`ALTER TABLE trip_telemetry_history ADD COLUMN IF NOT EXISTS base_insurance_price NUMERIC(8,2);`;
+      await sql`ALTER TABLE trip_telemetry_history ADD COLUMN IF NOT EXISTS predicted_insurance_price NUMERIC(8,2);`;
+      await sql`ALTER TABLE trip_telemetry_history ADD COLUMN IF NOT EXISTS insurance_risk_score NUMERIC(5,2);`;
+      await sql`ALTER TABLE trip_telemetry_history ADD COLUMN IF NOT EXISTS model_type VARCHAR(50);`;
+    } catch (e: any) {
+      this.logger.warn(`Could not ensure IoT/LSTM schema columns: ${e.message}`);
+    }
   }
 
   onModuleDestroy() {
@@ -338,6 +356,7 @@ export class IotService implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(`[DB] Failed to persist telemetry snapshot; it will retry on a later ingest: ${e.message}`);
       });
     }
+    }
 
     this.telemetryByConnection.set(conn, payload);
     return {
@@ -495,9 +514,13 @@ export class IotService implements OnModuleInit, OnModuleDestroy {
     let aiResponse: any = null;
     try {
       const baseUrl = process.env.AI_ML_API_URL || 'http://localhost:8000';
+      const aiServiceToken = process.env.AI_ML_SERVICE_TOKEN || '';
       const res = await fetch(`${baseUrl}/api/predict/insurance`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-service-token': aiServiceToken },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(aiServiceToken ? { 'x-service-token': aiServiceToken } : {}),
+        },
         body: JSON.stringify({
           truck_id: truckId,
           truck_type: truck.type,
@@ -557,6 +580,25 @@ export class IotService implements OnModuleInit, OnModuleDestroy {
         isPaired: Boolean(boundTruck),
       });
     }
+    return list;
+  }
+
+  async syncDeviceRegistry(
+    devices: Array<{ id: string; connectionNumber: string; name: string; productType?: string; battery?: number; powerOn?: boolean; status?: string }> = [],
+    removedDeviceIds: string[] = [],
+  ) {
+    const normalized = (devices || [])
+      .filter((d) => d?.id && d?.connectionNumber)
+      .map((d) => ({
+        id: String(d.id).trim(),
+        connection: String(d.connectionNumber).trim().toUpperCase(),
+        name: String(d.name || d.id).trim(),
+        product: String(d.productType || 'Cold Cargo').trim(),
+        battery: d.battery == null ? null : Number(d.battery),
+        powerOn: d.powerOn !== false,
+        status: String(d.status || (d.powerOn === false ? 'offline' : 'online')).trim(),
+      }));
+
     const statements: Array<{ text: string; values: unknown[] }> = [
       ...(removedDeviceIds.length ? [{
         text: 'UPDATE iot_devices SET active = false, updated_at = NOW() WHERE device_id = ANY($1::varchar[])',
@@ -626,6 +668,10 @@ export class IotService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  // Connect a truck to an IoT connection number
+  async connectDevice(truckId: string, rawConnectionNumber: string, _actorId?: string) {
+    const conn = rawConnectionNumber.trim().toUpperCase();
+
     const sql = this.neonService.getSql();
     if (!sql) throw new BadRequestException('Database unavailable; cannot verify device pairing.');
     const conflicts = await sql`
@@ -669,7 +715,7 @@ export class IotService implements OnModuleInit, OnModuleDestroy {
   }
 
   // Disconnect truck from IoT device
-  async disconnectDevice(truckId: string) {
+  async disconnectDevice(truckId: string, _actorId?: string) {
     const sql = this.neonService.getSql();
     const conn = this.truckToConnection.get(truckId) || null;
     if (conn) {

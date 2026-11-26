@@ -196,11 +196,10 @@ export default function TruckPanel() {
         apiFetch('/api/truck/active-trip').catch(() => null),
         apiFetch('/api/truck/issues').catch(() => []),
       ]);
+      setTruck(t);
       if (iss != null && !Array.isArray(iss)) throw new Error('GET /api/truck/issues returned an invalid issue response.');
-      if (!tripResponse || tripResponse.success !== true || (tripResponse.trip !== null && typeof tripResponse.trip !== 'object')) {
-        throw new Error('The assigned trip service returned an invalid response.');
-      }
-      setActiveTrip(tripResponse.trip);
+      const resolvedTrip = at && typeof at === 'object' && 'trip' in at ? at.trip : at;
+      setActiveTrip(resolvedTrip || null);
       setIssuesList(Array.isArray(iss) ? iss : []);
       if (t) setTempInput(String(t.target_temp_c));
       if (t) await fetchTelemetry();
@@ -507,28 +506,13 @@ export default function TruckPanel() {
                   </div>
 
                   {telemetryData?.isIotConnected ? (
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
-                        {telemetryData.connectionNumber || truck.iot_connection_number}
-                      </span>
-                      <button
-                        onClick={handleDisconnectIot}
-                        disabled={connectingIot}
-                        className="text-xs text-red-600 hover:underline"
-                      >
-                        Disconnect
-                      </button>
-                    </div>
+                    <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                      {telemetryData.connectionNumber || truck.iot_connection_number}
+                    </span>
                   ) : (
-                    <button
-                      onClick={() => {
-                        fetchAvailableIotDevices();
-                        setShowPairModal(true);
-                      }}
-                      className="btn-primary text-xs px-3 py-1.5"
-                    >
-                      + Connect Sensor
-                    </button>
+                    <span className="text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-600">
+                      Simulated / Unpaired
+                    </span>
                   )}
                 </div>
 
@@ -663,18 +647,9 @@ export default function TruckPanel() {
                   </div>
                 ) : (
                   <div className="text-center py-6 px-4">
-                    <p className="text-xs text-slate-500 mb-3">
-                      No IoT device currently transmitting to this truck. Pair with an active sensor in the IoT Simulator (:3001) using its Connection Number.
+                    <p className="text-xs text-slate-500">
+                      No IoT device currently transmitting to this truck. Ask your fleet owner to pair an active sensor.
                     </p>
-                    <button
-                      onClick={() => {
-                        fetchAvailableIotDevices();
-                        setShowPairModal(true);
-                      }}
-                      className="btn-ghost text-xs px-4 py-2 border border-slate-300"
-                    >
-                      🔌 Pair Connection Number
-                    </button>
                   </div>
                 )}
               </div>
@@ -713,7 +688,6 @@ export default function TruckPanel() {
                 <p className="text-xs mt-0.5" style={{ color: 'var(--color-slate)' }}>Notify fleet manager</p>
               </button>
             </div>
-          </div>
 
           {/* ── 2. ACTIVE TRIP / START TRIP ─────────────────────────────── */}
           {activeTrip ? (

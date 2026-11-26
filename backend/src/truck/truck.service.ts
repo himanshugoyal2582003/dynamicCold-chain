@@ -102,6 +102,7 @@ export class TruckService {
   async getTelemetry(truckId: string) {
     const truck = await this.getMyTruck(truckId);
     if (!truck) throw new BadRequestException('Truck not found.');
+    const plate = truck.plate_number;
     // 1. Check if an active IoT device is paired to this truck
     const iotData = this.iotService.getTelemetryForTruck(truckId);
     const connNumber = this.iotService.getConnectionForTruck(truckId) || truck.iot_connection_number;
