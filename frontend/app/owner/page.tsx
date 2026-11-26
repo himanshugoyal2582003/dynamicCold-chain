@@ -214,7 +214,7 @@ export default function OwnerDashboard() {
       });
       const ins = res.insurance;
       setSuccess(
-        `Dynamic AI Insurance updated for ${plateNumber}: New rate $${ins.current_price}/mo (${ins.risk_tier || 'Recalculated'}) - ${ins.recommendation || 'Updated'}`
+        `Dynamic AI Insurance updated for ${plateNumber}: New rate ₹${ins.current_price}/mo (${ins.risk_tier || 'Recalculated'}) - ${ins.recommendation || 'Updated'}`
       );
       loadData();
     } catch (err: any) {
@@ -449,7 +449,7 @@ export default function OwnerDashboard() {
                     </div>
                     <div>
                       <span className="text-slate-500">Premium: </span>
-                      <span className="text-amber-400 font-semibold">${t.current_insurance_price || 450}/mo</span>
+                      <span className="text-amber-700 font-semibold">₹{t.current_insurance_price || 450}/mo</span>
                     </div>
                   </div>
                   </Link>
@@ -625,7 +625,7 @@ export default function OwnerDashboard() {
                           {row.bad_env_rsl_hours ?? '—'} hrs
                         </td>
                         <td className="font-mono font-semibold tabular-nums">
-                          ${Number(row.predicted_insurance_price ?? row.truck_current_price ?? 450).toFixed(2)}/mo
+                          ₹{Number(row.predicted_insurance_price ?? row.truck_current_price ?? 450).toFixed(2)}/mo
                         </td>
                       </tr>
                     ))}
@@ -644,7 +644,7 @@ export default function OwnerDashboard() {
             {/* Insurance Overview Cards */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="card p-4">
-                <p className="text-2xl font-bold tabular-nums text-amber-700">${avgPremium}<span className="text-xs text-slate-500 font-normal">/mo</span></p>
+                <p className="text-2xl font-bold tabular-nums text-amber-700">₹{avgPremium}<span className="text-xs text-slate-500 font-normal">/mo</span></p>
                 <p className="text-xs uppercase font-medium tracking-wide mt-1 text-slate-500">Average Premium / Truck</p>
               </div>
 
@@ -758,22 +758,22 @@ export default function OwnerDashboard() {
                             )}
                           </td>
 
-                          <td className="font-mono text-xs text-gray-400 tabular-nums">
-                            ${basePrice.toFixed(2)}/mo
+                          <td className="font-mono text-xs text-slate-600 tabular-nums">
+                            ₹{basePrice.toFixed(2)}/mo
                           </td>
 
                           <td>
-                            <div className="font-bold text-base tabular-nums text-amber-300">
-                              ${currentPrice.toFixed(2)}
-                              <span className="text-xs font-normal text-gray-400">/mo</span>
+                            <div className="font-bold text-base tabular-nums text-amber-700">
+                              ₹{currentPrice.toFixed(2)}
+                              <span className="text-xs font-normal text-slate-500">/mo</span>
                             </div>
                             <div className="text-[11px] font-mono">
                               {diff < 0 ? (
-                                <span className="text-emerald-400">Saved ${Math.abs(diff).toFixed(2)}/mo</span>
+                                <span className="text-emerald-700">Saved ₹{Math.abs(diff).toFixed(2)}/mo</span>
                               ) : diff > 0 ? (
-                                <span className="text-red-400">+${diff.toFixed(2)} excursion fee</span>
+                                <span className="text-red-700">+₹{diff.toFixed(2)} excursion fee</span>
                               ) : (
-                                <span className="text-gray-500">Standard tier</span>
+                                <span className="text-slate-500">Standard tier</span>
                               )}
                             </div>
                           </td>
@@ -893,7 +893,7 @@ export default function OwnerDashboard() {
                           {row.bad_env_rsl_hours ?? '—'} hrs
                         </td>
                         <td className="font-mono font-semibold tabular-nums">
-                          ${Number(row.predicted_insurance_price ?? row.truck_current_price ?? 450).toFixed(2)}/mo
+                          ₹{Number(row.predicted_insurance_price ?? row.truck_current_price ?? 450).toFixed(2)}/mo
                         </td>
                       </tr>
                     ))}

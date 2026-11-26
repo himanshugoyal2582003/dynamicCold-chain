@@ -245,7 +245,7 @@ export default function TruckDetail() {
       const ins = res.insurance || res;
       const price = ins.current_price ?? ins.new_monthly_premium ?? 450;
       const pct = ins.price_change_pct !== undefined ? ins.price_change_pct : (ins.change_percentage || 0);
-      setSuccess(`AI Insurance recalculated: $${price}/mo (${pct >= 0 ? '+' : ''}${pct}% based on telemetry compliance).`);
+      setSuccess(`AI Insurance recalculated: ₹${price}/mo (${pct >= 0 ? '+' : ''}${pct}% based on telemetry compliance).`);
       fetchAll();
     } catch (e: any) {
       setError(e.message);
@@ -427,13 +427,13 @@ export default function TruckDetail() {
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-black/40 p-3">
                 <div>
                   <span className="text-xs text-gray-400 block">Monthly Premium</span>
-                  <span className="text-3xl font-extrabold text-white tabular-nums">${premium}</span>
+                  <span className="text-3xl font-extrabold text-white tabular-nums">₹{premium}</span>
                   <span className="text-xs text-gray-500"> / month</span>
                 </div>
                 <div className="text-right">
-                  <span className="text-xs text-gray-400 block">Baseline: $450/mo</span>
+                  <span className="text-xs text-gray-400 block">Baseline: ₹{basePrice}/mo</span>
                   <span className={`text-sm font-bold tabular-nums ${isDiscount ? 'text-emerald-400' : isSurcharge ? 'text-red-400' : 'text-gray-400'}`}>
-                    {isDiscount ? `-$${Math.abs(premiumDiff)}/mo` : isSurcharge ? `+$${premiumDiff}/mo` : 'No adjustment'}
+                    {isDiscount ? `-₹${Math.abs(premiumDiff)}/mo` : isSurcharge ? `+₹${premiumDiff}/mo` : 'No adjustment'}
                   </span>
                 </div>
               </div>
@@ -659,7 +659,7 @@ export default function TruckDetail() {
                         <span className="text-red-600">{row.bad_env_rsl_hours ?? '—'}h</span>
                       </td>
                       <td className="font-mono tabular-nums font-semibold">
-                        ${Number(row.predicted_insurance_price ?? truck?.current_insurance_price ?? 450).toFixed(2)}/mo
+                        ₹{Number(row.predicted_insurance_price ?? truck?.current_insurance_price ?? 450).toFixed(2)}/mo
                       </td>
                       <td className="text-gray-400 max-w-xs truncate">{row.route_recommendation || 'Route optimal'}</td>
                     </tr>

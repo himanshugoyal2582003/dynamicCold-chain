@@ -42,7 +42,7 @@ function escapeHtml(value: unknown): string {
 
 function formatMoney(v: unknown, fallback = 450): string {
   const n = Number(v);
-  return Number.isFinite(n) ? `$${n.toFixed(2)}` : `$${fallback.toFixed(2)}`;
+  return Number.isFinite(n) ? `₹${n.toFixed(2)}` : `₹${fallback.toFixed(2)}`;
 }
 
 function formatTime(v?: string): string {
@@ -206,8 +206,8 @@ export function openColdChainPdfReport(options: {
 
   <div class="kpis">
     <div class="kpi"><div class="kpi-val">${trucks.length}</div><div class="kpi-lbl">Trucks Included</div></div>
-    <div class="kpi"><div class="kpi-val">$${avgBase.toFixed(2)}/mo</div><div class="kpi-lbl">Avg Base Price</div></div>
-    <div class="kpi"><div class="kpi-val">$${avgPred.toFixed(2)}/mo</div><div class="kpi-lbl">Avg LSTM Price</div></div>
+    <div class="kpi"><div class="kpi-val">₹${avgBase.toFixed(2)}/mo</div><div class="kpi-lbl">Avg Base Price</div></div>
+    <div class="kpi"><div class="kpi-val">₹${avgPred.toFixed(2)}/mo</div><div class="kpi-lbl">Avg LSTM Price</div></div>
     <div class="kpi"><div class="kpi-val">${logs.length}</div><div class="kpi-lbl">1-Min LSTM Records</div></div>
   </div>
 

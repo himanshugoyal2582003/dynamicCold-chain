@@ -322,7 +322,7 @@ export default function AdminTrucks() {
               { label: 'Truck Type', key: 'type', placeholder: 'Refrigerated Semi 10T' },
               { label: 'Capacity (tons)', key: 'capacity_tons', placeholder: '10.5' },
               { label: 'Target Temp (°C)', key: 'target_temp_c', placeholder: '4.0' },
-              { label: 'Base Insurance Price ($/mo)', key: 'base_insurance_price', placeholder: '450.00' },
+              { label: 'Base Insurance Price (₹/mo)', key: 'base_insurance_price', placeholder: '450.00' },
               { label: 'Insurance Expiry', key: 'insurance_expiry', type: 'date' },
               { label: 'Permit Expiry', key: 'permit_expiry', type: 'date' },
               { label: 'Fitness Expiry', key: 'fitness_expiry', type: 'date' },

@@ -79,7 +79,7 @@ export default function AdminInsurancePage() {
         body: JSON.stringify({ base_insurance_price: val }),
       });
       await apiFetch(`/api/iot/insurance/${editingTruck.id}/recalculate`, { method: 'POST' });
-      setSuccess(`Updated real base price for ${editingTruck.plate_number} to $${val.toFixed(2)}/mo and recalculated LSTM insurance.`);
+      setSuccess(`Updated real base price for ${editingTruck.plate_number} to ₹${val.toFixed(2)}/mo and recalculated LSTM insurance.`);
       setEditingTruck(null);
       await fetchAll();
     } catch (e: any) {
@@ -95,7 +95,7 @@ export default function AdminInsurancePage() {
     try {
       const res = await apiFetch(`/api/iot/insurance/${truckId}/recalculate`, { method: 'POST' });
       const ins = res.insurance || res;
-      setSuccess(`LSTM Insurance updated for ${plate}: $${ins.current_price}/mo (${ins.risk_tier})`);
+      setSuccess(`LSTM Insurance updated for ${plate}: ₹${ins.current_price}/mo (${ins.risk_tier})`);
       await fetchAll();
     } catch (e: any) {
       setError(e.message);
@@ -186,11 +186,11 @@ export default function AdminInsurancePage() {
             <p className="text-xs uppercase tracking-wide mt-1" style={{ color: 'var(--color-slate)' }}>Active Trucks</p>
           </div>
           <div className="card p-4">
-            <p className="text-2xl font-bold tabular-nums">${avgBase}</p>
+            <p className="text-2xl font-bold tabular-nums">₹{avgBase}</p>
             <p className="text-xs uppercase tracking-wide mt-1" style={{ color: 'var(--color-slate)' }}>Avg Admin Base Price</p>
           </div>
           <div className="card p-4">
-            <p className="text-2xl font-bold tabular-nums" style={{ color: 'var(--color-gold)' }}>${avgPred}</p>
+            <p className="text-2xl font-bold tabular-nums" style={{ color: 'var(--color-gold)' }}>₹{avgPred}</p>
             <p className="text-xs uppercase tracking-wide mt-1" style={{ color: 'var(--color-slate)' }}>Avg LSTM Predicted Price</p>
           </div>
           <div className="card p-4">
@@ -254,9 +254,9 @@ export default function AdminInsurancePage() {
                     <tr key={t.id}>
                       <td className="font-mono font-semibold">{t.plate_number}</td>
                       <td>{t.owner_name || '—'}</td>
-                      <td className="font-mono tabular-nums">${base.toFixed(2)}/mo</td>
+                      <td className="font-mono tabular-nums">₹{base.toFixed(2)}/mo</td>
                       <td className="font-mono font-semibold tabular-nums">
-                        ${curr.toFixed(2)}/mo{' '}
+                        ₹{curr.toFixed(2)}/mo{' '}
                         <span className="text-xs" style={{ color: diff > 0 ? 'var(--status-issue)' : diff < 0 ? 'var(--status-available)' : 'var(--color-slate)' }}>
                           ({diff >= 0 ? '+' : ''}{diff.toFixed(2)})
                         </span>
@@ -342,7 +342,7 @@ export default function AdminInsurancePage() {
                       {row.bad_env_rsl_hours ?? '—'} hrs
                     </td>
                     <td className="font-mono font-semibold tabular-nums">
-                      ${Number(row.predicted_insurance_price ?? row.truck_current_price ?? 450).toFixed(2)}/mo
+                      ₹{Number(row.predicted_insurance_price ?? row.truck_current_price ?? 450).toFixed(2)}/mo
                     </td>
                     <td className="font-mono text-[11px]">{row.model_type || 'PyTorch-LSTM'}</td>
                   </tr>
@@ -358,7 +358,7 @@ export default function AdminInsurancePage() {
           <form onSubmit={handleSaveBasePrice} className="space-y-4">
             <div>
               <label className="block text-xs font-medium uppercase tracking-wide mb-1" style={{ color: 'var(--color-slate)' }}>
-                Monthly Base Insurance Price (USD $)
+                Monthly Base Insurance Price (INR ₹)
               </label>
               <input
                 type="number"
