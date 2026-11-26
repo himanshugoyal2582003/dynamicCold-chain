@@ -18,8 +18,8 @@ import {
 } from '@/components/ui/shared';
 
 const NAV = [
-  { href: '/owner/trips', label: 'Trip Management', icon: '🛣️' },
-  { href: '/owner', label: 'My Fleet', icon: '🚛' },
+  { href: '/owner', label: 'Overview', icon: '🚛' },
+  { href: '/owner?tab=insurance', label: 'Insurance', icon: '🛡️' },
   { href: '/owner/drivers', label: 'Drivers', icon: '👤' },
 ];
 
@@ -112,25 +112,13 @@ export default function TruckDetail() {
         apiFetch(`/api/owner/trucks/${id}/trips`),
       ]);
       setTruck(t);
-      if (t?.target_temp_c) setNewTargetTemp(String(t.target_temp_c));
+      if (t?.target_temp_c !== undefined && t?.target_temp_c !== null) {
+        setNewTargetTemp(String(t.target_temp_c));
+      }
       setTrips(tr);
-      const [iotResult, historyResult] = await Promise.allSettled([
-        apiFetch(`/api/iot/telemetry/${id}`),
-        apiFetch(`/api/iot/history/${id}`),
-      ]);
-      if (iotResult.status === 'fulfilled') {
-        setIotTelemetry(iotResult.value?.telemetry || null);
-        setTelemetryError('');
-      } else {
-        setTelemetryError(iotResult.reason?.message || 'Could not load live IoT telemetry.');
-      }
-      if (historyResult.status === 'fulfilled') {
-        if (!Array.isArray(historyResult.value?.history)) throw new Error(`GET /api/iot/history/${id} returned an invalid telemetry history response.`);
-        setTelemetryHistory(historyResult.value.history);
-        setHistoryError('');
-      } else {
-        setHistoryError(historyResult.reason?.message || 'Could not load telemetry history.');
-      }
+      setDrivers(d.filter((dr: any) => dr.active));
+      if (iot?.telemetry) setIotTelemetry(iot.telemetry);
+      if (Array.isArray(hist?.history)) setTelemetryHistory(hist.history);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -151,7 +139,16 @@ export default function TruckDetail() {
           setTelemetryError(e?.message || 'Could not refresh live IoT telemetry.');
         }
       }, 4000);
-      return () => clearInterval(timer);
+      const historyTimer = setInterval(async () => {
+        try {
+          const res = await apiFetch(`/api/iot/history/${id}`);
+          if (Array.isArray(res?.history)) setTelemetryHistory(res.history);
+        } catch {}
+      }, 60000);
+      return () => {
+        clearInterval(timer);
+        clearInterval(historyTimer);
+      };
     }
   }, [user, id]);
 
@@ -222,7 +219,7 @@ export default function TruckDetail() {
       if (isNaN(val)) throw new Error('Invalid temperature');
       await apiFetch(`/api/owner/trucks/${id}/target-temp`, {
         method: 'PATCH',
-        body: JSON.stringify({ targetTemp: val }),
+        body: JSON.stringify({ targetTempC: val }),
       });
       setSuccess(`Target temperature updated to ${val}°C.`);
       setShowEditTemp(false);
@@ -241,8 +238,9 @@ export default function TruckDetail() {
       const res = await apiFetch(`/api/iot/insurance/${id}/recalculate`, {
         method: 'POST',
       });
-      const price = res.current_price || res.new_monthly_premium || 450;
-      const pct = res.price_change_pct !== undefined ? res.price_change_pct : (res.change_percentage || 0);
+      const ins = res.insurance || res;
+      const price = ins.current_price ?? ins.new_monthly_premium ?? 450;
+      const pct = ins.price_change_pct !== undefined ? ins.price_change_pct : (ins.change_percentage || 0);
       setSuccess(`AI Insurance recalculated: $${price}/mo (${pct >= 0 ? '+' : ''}${pct}% based on telemetry compliance).`);
       fetchAll();
     } catch (e: any) {
@@ -258,7 +256,7 @@ export default function TruckDetail() {
     const expired = isExpired(date);
     const soon = isExpiringSoon(date) || expiring;
     return (
-      <div className="flex items-center justify-between py-2 border-b" style={{ borderColor: 'var(--color-hairline)' }}>
+      <div className="flex flex-wrap items-center justify-between gap-2 py-2 border-b" style={{ borderColor: 'var(--color-hairline)' }}>
         <span className="text-xs uppercase tracking-wide font-medium" style={{ color: 'var(--color-slate)' }}>{label}</span>
         <span>
           {expired ? <span className="tag-expired">{formatDate(date)}</span>
@@ -273,6 +271,33 @@ export default function TruckDetail() {
   const basePrice = truck?.base_insurance_price || 450;
   const premiumDiff = premium - basePrice;
   const isDiscount = premiumDiff < 0;
+  const configuredTarget = Number(truck?.target_temp_c);
+  const telemetryDeviation = iotTelemetry && Number.isFinite(configuredTarget)
+    ? Math.abs(Number(iotTelemetry.temperature) - configuredTarget)
+    : 0;
+  const excursionRiskLevel = telemetryDeviation > 3
+    ? 'CRITICAL'
+    : telemetryDeviation > 1.5
+      ? 'HIGH'
+      : telemetryDeviation > 1
+        ? 'MODERATE'
+        : 'LOW';
+  const riskRanks: Record<string, number> = { LOW: 0, MODERATE: 1, HIGH: 2, CRITICAL: 3 };
+  const sourceRiskLevel = Number(iotTelemetry?.spoilage_risk) >= 0.75
+    ? 'CRITICAL'
+    : Number(iotTelemetry?.spoilage_risk) >= 0.45
+      ? 'HIGH'
+      : Number(iotTelemetry?.spoilage_risk) >= 0.25
+        ? 'MODERATE'
+      : iotTelemetry?.spoilage_risk_level || 'LOW';
+  const displayedRiskLevel = (riskRanks[excursionRiskLevel] || 0) > (riskRanks[sourceRiskLevel] || 0)
+    ? excursionRiskLevel
+    : sourceRiskLevel;
+  const displayedRisk = Math.max(Number(iotTelemetry?.spoilage_risk) || 0, telemetryDeviation > 3 ? 0.9 : telemetryDeviation > 1.5 ? 0.6 : telemetryDeviation > 1 ? 0.35 : 0);
+  const telemetryAgeMs = iotTelemetry
+    ? Date.now() - Date.parse(iotTelemetry.received_at || iotTelemetry.timestamp)
+    : Number.POSITIVE_INFINITY;
+  const telemetryFresh = telemetryAgeMs >= 0 && telemetryAgeMs < 30000;
   const isSurcharge = premiumDiff > 0;
 
   return (
@@ -285,39 +310,42 @@ export default function TruckDetail() {
           {success && <SuccessAlert message={success} />}
 
           {/* Top navigation header */}
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <button onClick={() => router.push('/owner')} className="btn-ghost text-xs flex items-center gap-1">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <button onClick={() => router.push('/owner')} className="no-print btn-ghost text-xs flex items-center gap-1">
               <span>←</span>
               <span>Back to Fleet Overview</span>
             </button>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
+              <button onClick={() => window.print()} className="no-print btn-primary text-xs">
+                🖨️ Print / Export PDF
+              </button>
               <span className="text-xs text-gray-400">Status:</span>
               <StatusBadge status={truck.status} />
             </div>
           </div>
 
           {/* 3-Column Top Grid: Truck Specs, AI Insurance Pricing, Compliance */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <div className="grid min-w-0 grid-cols-1 gap-5 lg:grid-cols-3">
             {/* 1. Truck & Temperature Control */}
             <div className="card space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-sm font-bold uppercase tracking-wider text-amber-500">Vehicle Specifications</h2>
                 <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-amber-500/10 text-amber-500 border border-amber-500/30">
                   {truck.plate_number}
                 </span>
               </div>
 
-              <div className="divide-y divide-slate-800 text-sm">
+              <div className="divide-y divide-slate-200 text-sm">
                 <div className="py-2 flex justify-between">
-                  <span className="text-xs text-gray-400">Chassis & Body</span>
-                  <span className="font-medium text-slate-200">{truck.type}</span>
+                  <span className="text-xs text-slate-600">Chassis & Body</span>
+                  <span className="font-medium text-slate-800">{truck.type}</span>
                 </div>
                 <div className="py-2 flex justify-between">
-                  <span className="text-xs text-gray-400">Payload Capacity</span>
-                  <span className="font-medium text-slate-200">{truck.capacity_tons} Tonnes</span>
+                  <span className="text-xs text-slate-600">Payload Capacity</span>
+                  <span className="font-medium text-slate-800">{truck.capacity_tons} Tonnes</span>
                 </div>
                 <div className="py-2 flex justify-between items-center">
-                  <span className="text-xs text-gray-400">Target Temp</span>
+                  <span className="text-xs text-slate-600">Target Temp</span>
                   <div className="flex items-center gap-2">
                     <span className="font-bold text-amber-400 text-base">{truck.target_temp_c}°C</span>
                     <button
@@ -329,14 +357,14 @@ export default function TruckDetail() {
                   </div>
                 </div>
                 <div className="py-2 flex justify-between items-center">
-                  <span className="text-xs text-gray-400">Assigned Driver</span>
-                  <span className="font-medium text-slate-200">{truck.driver_name || 'Unassigned'}</span>
+                  <span className="text-xs text-slate-600">Assigned Driver</span>
+                  <span className="font-medium text-slate-800">{truck.driver_name || 'Unassigned'}</span>
                 </div>
                 <div className="py-2 flex justify-between items-center">
-                  <span className="text-xs text-gray-400">Paired IoT Sensor</span>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-xs font-bold text-emerald-400">
-                      {truck.iot_connection_number || 'NO DEVICE PAIRED'}
+                  <span className="text-xs text-slate-600">Paired IoT Sensor</span>
+                  {truck.iot_connection_number ? (
+                    <span className="font-mono text-xs font-bold text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-500/30">
+                      {truck.iot_connection_number}
                     </span>
                     <button type="button" className="btn-ghost text-xs" onClick={() => setShowIotManager(true)}>Manage</button>
                   </div>
@@ -362,13 +390,13 @@ export default function TruckDetail() {
             </div>
 
             {/* 2. Dynamic AI Insurance Pricing Model */}
-            <div className="card space-y-3 bg-gradient-to-br from-slate-900 to-slate-900/90 border border-amber-500/20">
-              <div className="flex items-center justify-between">
+            <div className="card min-w-0 space-y-3 bg-gradient-to-br from-slate-900 to-slate-900/90 border border-amber-500/20">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <span className="text-lg">🛡️</span>
                   <h2 className="text-sm font-bold uppercase tracking-wider text-amber-400">AI Insurance Pricing</h2>
                 </div>
-                <span className={`text-xs px-2 py-0.5 rounded font-bold uppercase ${
+                <span className={`max-w-full whitespace-normal text-xs px-2 py-0.5 rounded font-bold uppercase ${
                   isDiscount ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-500/40'
                   : isSurcharge ? 'bg-red-950/60 text-red-400 border border-red-500/40'
                   : 'bg-slate-800 text-slate-300'
@@ -377,7 +405,7 @@ export default function TruckDetail() {
                 </span>
               </div>
 
-              <div className="p-3 rounded-lg bg-black/40 border border-slate-800 flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-black/40 p-3">
                 <div>
                   <span className="text-xs text-gray-400 block">Monthly Premium</span>
                   <span className="text-3xl font-extrabold text-white tabular-nums">${premium}</span>
@@ -396,8 +424,8 @@ export default function TruckDetail() {
                   <span className="text-gray-400">Risk Score:</span>
                   <span className="font-mono font-semibold text-amber-300">
                     {truck.insurance_risk_score !== null && truck.insurance_risk_score !== undefined
-                      ? (truck.insurance_risk_score * 100).toFixed(0) + ' / 100'
-                      : '15 / 100'}
+                      ? Number(truck.insurance_risk_score).toFixed(1) + ' / 100'
+                      : '15.0 / 100'}
                   </span>
                 </div>
                 <div className="flex justify-between">
@@ -406,7 +434,7 @@ export default function TruckDetail() {
                     {truck.insurance_last_evaluated_at ? formatDateTime(truck.insurance_last_evaluated_at) : 'Active Evaluation'}
                   </span>
                 </div>
-                <div className="p-2 rounded bg-slate-950/60 text-[11px] text-gray-400 border border-slate-800">
+                <div className="break-words rounded border border-slate-800 bg-slate-950/60 p-2 text-[11px] text-gray-300">
                   <span className="text-amber-400 font-semibold">AI Assessment: </span>
                   {truck.insurance_pricing_notes || 'Stable telemetry with compliant temperatures. Continued optimal cold-chain performance will lower monthly premium gradually.'}
                 </div>
@@ -441,26 +469,36 @@ export default function TruckDetail() {
           </div>
 
           {/* Live IoT Sensor Gateway & AI Spoilage Monitor */}
-          <div className="card p-5 border border-slate-700/80 bg-slate-900/60">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-800">
+          <div className="card p-5 border border-slate-200 bg-white">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-200">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-emerald-950/60 border border-emerald-500/40 flex items-center justify-center text-xl">
+                <div className="w-10 h-10 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center text-xl">
                   📡
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-white">Live IoT Telemetry & Spoilage Predictor</h3>
-                  <p className="text-xs text-gray-400">Streamed from ESP32 DHT22 sensor gateway via AI/ML inference</p>
+                  <h3 className="text-base font-bold text-slate-900">Live IoT Telemetry & SpoilageLSTM Predictor</h3>
+                  <p className="text-xs text-slate-500">Streamed from ESP32 DHT22 sensor gateway via PyTorch LSTM inference</p>
                 </div>
               </div>
               <div>
                 {iotTelemetry ? (
-                  <span className="inline-flex items-center gap-2 text-xs font-mono font-bold px-3 py-1 rounded bg-emerald-950/60 text-emerald-400 border border-emerald-500/40">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    ONLINE: {iotTelemetry.connection_number || 'CONNECTED'}
+                  <span className={`inline-flex items-center gap-2 text-xs font-mono font-bold px-3 py-1 rounded border ${
+                    iotTelemetry.source === 'fallback'
+                      ? 'bg-amber-50 text-amber-800 border-amber-200'
+                      : telemetryFresh
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : 'bg-red-50 text-red-700 border-red-200'
+                  }`}>
+                    <span className={`w-2 h-2 rounded-full ${iotTelemetry.source === 'fallback' ? 'bg-amber-500' : telemetryFresh ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
+                    {iotTelemetry.source === 'fallback'
+                      ? 'SIMULATED FALLBACK'
+                      : telemetryFresh
+                        ? `LIVE SENSOR: ${iotTelemetry.connection_number || 'CONNECTED'}`
+                        : `STALE SENSOR: ${iotTelemetry.connection_number || 'CONNECTED'}`}
                   </span>
                 ) : (
-                  <span className="text-xs font-medium text-gray-400 bg-slate-800 px-3 py-1 rounded border border-slate-700">
-                    No IoT Device Paired
+                  <span className="text-xs font-medium text-slate-500 bg-slate-100 px-3 py-1 rounded border border-slate-200">
+                    {truck?.iot_connection_number ? 'Paired device has no recent reading' : 'No IoT device paired'}
                   </span>
                 )}
               </div>
@@ -468,55 +506,65 @@ export default function TruckDetail() {
 
             {iotTelemetry ? (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="p-3 rounded-lg bg-black/40 border border-slate-800">
-                  <span className="text-xs text-gray-400 block mb-1">Cargo Temp</span>
+                <div className="p-3 rounded-lg bg-emerald-50/70 border border-emerald-200">
+                  <span className="text-xs font-semibold text-emerald-800 block mb-1">Cargo Temp</span>
                   <div className="flex items-baseline gap-2">
-                    <span className="text-2xl font-bold tabular-nums text-white">{iotTelemetry.temperature}°C</span>
-                    <span className="text-xs text-gray-400">Target: {truck.target_temp_c}°C</span>
+                    <span className="text-2xl font-bold tabular-nums text-slate-900">{iotTelemetry.temperature}°C</span>
+                    <span className="text-xs text-slate-500">Target: {truck.target_temp_c}°C</span>
                   </div>
                   <span className={`text-[11px] block mt-1 font-medium ${
-                    Math.abs(iotTelemetry.temperature - truck.target_temp_c) <= 1 ? 'text-emerald-400' : 'text-amber-400'
+                    telemetryDeviation <= 1 ? 'text-emerald-700' : 'text-red-700'
                   }`}>
                     {Math.abs(iotTelemetry.temperature - truck.target_temp_c) <= 1 ? '✓ Within Safe Threshold' : '⚠️ Excursion Detected'}
                   </span>
+                  {Number.isFinite(Number(iotTelemetry.device_target_temp)) && Math.abs(Number(iotTelemetry.device_target_temp) - configuredTarget) > 0.1 && (
+                    <span className="text-[10px] text-amber-800 block mt-1">Device setpoint {iotTelemetry.device_target_temp}°C; truck setpoint {configuredTarget}°C is used for safety checks.</span>
+                  )}
                 </div>
 
-                <div className="p-3 rounded-lg bg-black/40 border border-slate-800">
-                  <span className="text-xs text-gray-400 block mb-1">Humidity & Battery</span>
+                <div className="p-3 rounded-lg bg-cyan-50/70 border border-cyan-200">
+                  <span className="text-xs font-semibold text-cyan-800 block mb-1">Humidity & Battery</span>
                   <div className="flex items-baseline gap-2">
-                    <span className="text-2xl font-bold tabular-nums text-white">{iotTelemetry.humidity}%</span>
-                    <span className="text-xs text-gray-400 font-mono">🔋 {iotTelemetry.battery}%</span>
+                    <span className="text-2xl font-bold tabular-nums text-slate-900">{iotTelemetry.humidity}%</span>
+                    <span className="text-xs text-slate-600 font-mono">🔋 {iotTelemetry.battery}%</span>
                   </div>
-                  <span className="text-[11px] text-gray-400 block mt-1">Sensor: ESP32 + DHT22</span>
+                  <span className="text-[11px] text-slate-500 block mt-1">Sensor: ESP32 + DHT22</span>
                 </div>
 
-                <div className="p-3 rounded-lg bg-black/40 border border-slate-800">
-                  <span className="text-xs text-gray-400 block mb-1">AI Spoilage Risk</span>
+                <div className={`p-3 rounded-lg border ${
+                  displayedRiskLevel === 'CRITICAL' || displayedRiskLevel === 'HIGH'
+                    ? 'bg-red-50/70 border-red-200'
+                    : 'bg-amber-50/70 border-amber-200'
+                }`}>
+                  <span className="text-xs font-semibold text-amber-900 block mb-1">LSTM Spoilage Risk</span>
                   <div className="flex items-center gap-2">
                     <span className={`text-xs font-bold px-2 py-0.5 rounded ${
-                      iotTelemetry.spoilage_risk_level === 'CRITICAL' ? 'bg-red-600 text-white'
-                      : iotTelemetry.spoilage_risk_level === 'HIGH' ? 'bg-amber-500 text-black'
+                      displayedRiskLevel === 'CRITICAL' ? 'bg-red-600 text-white'
+                      : displayedRiskLevel === 'HIGH' ? 'bg-amber-500 text-black'
                       : 'bg-emerald-600 text-white'
                     }`}>
-                      {iotTelemetry.spoilage_risk_level} ({(iotTelemetry.spoilage_risk * 100).toFixed(0)}%)
+                      {displayedRiskLevel} ({(displayedRisk * 100).toFixed(0)}%)
                     </span>
-                    <span className="text-xs text-gray-300">RSL: {iotTelemetry.shelf_life_remaining_hours}h</span>
+                    <span className="text-xs font-semibold text-slate-700">RSL: {iotTelemetry.shelf_life_remaining_hours}h</span>
                   </div>
-                  <span className="text-[11px] text-gray-400 block mt-1">Quality: {iotTelemetry.quality_retention_pct}%</span>
+                  <span className="text-[11px] text-slate-600 block mt-1">
+                    Quality: {iotTelemetry.quality_retention_pct}%
+                    {iotTelemetry.good_env_rsl_hours ? ` · Good/Bad: ${iotTelemetry.good_env_rsl_hours}h / ${iotTelemetry.bad_env_rsl_hours}h` : ''}
+                  </span>
                 </div>
 
-                <div className="p-3 rounded-lg bg-black/40 border border-slate-800">
-                  <span className="text-xs text-gray-400 block mb-1">Route & AI Advisory</span>
-                  <p className="text-xs font-medium text-slate-200 line-clamp-2">
+                <div className="p-3 rounded-lg bg-blue-50/70 border border-blue-200">
+                  <span className="text-xs font-semibold text-blue-800 block mb-1">Route & AI Advisory</span>
+                  <p className="text-xs font-medium text-slate-700 line-clamp-2">
                     {iotTelemetry.route_recommendation || 'Proceed on route. Cold chain fully preserved.'}
                   </p>
-                  <span className="text-[11px] text-gray-400 block mt-1">Speed: {iotTelemetry.vehicle_speed || 50} km/h</span>
+                  <span className="text-[11px] text-slate-500 block mt-1">Speed: {iotTelemetry.gps?.speed_kmh ?? iotTelemetry.vehicle_speed ?? 0} km/h</span>
                 </div>
               </div>
             ) : (
-              <div className="text-center py-6 text-gray-400 text-sm">
+              <div className="text-center py-6 text-slate-500 text-sm">
                 <p>No active IoT sensor telemetry streaming for this vehicle.</p>
-                <p className="text-xs text-gray-500 mt-1">
+                <p className="text-xs text-slate-400 mt-1">
                   Connect device with connection ID from IoT Simulator (:3001) or assign an active device ID.
                 </p>
               </div>
@@ -524,16 +572,16 @@ export default function TruckDetail() {
             {telemetryError && <ErrorAlert message={telemetryError} />}
           </div>
 
-          {/* 15-Minute Telemetry History Log (Neon DB) */}
+          {/* 1-Minute Telemetry History Log (Neon DB) */}
           <div className="card p-0 overflow-x-auto">
-            <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+            <div className="px-6 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
               <div>
-                <h2 className="text-sm font-bold text-white">15-Minute Telemetry & AI Prediction Log (Neon Database)</h2>
-                <p className="text-xs text-gray-400">
-                  Historical cold-chain records captured every 15 minutes during active trips. Used by AI model for insurance rating.
+                <h2 className="text-sm font-bold text-slate-900">1-Minute LSTM Telemetry & Insurance Log (Neon Database)</h2>
+                <p className="text-xs text-slate-500">
+                  Historical cold-chain records captured every minute during active trips. Used by InsuranceLSTM for dynamic pricing.
                 </p>
               </div>
-              <span className="text-xs font-mono text-gray-400 px-2.5 py-1 rounded bg-slate-800 border border-slate-700">
+              <span className="text-xs font-mono text-slate-600 px-2.5 py-1 rounded bg-slate-100 border border-slate-200">
                 {telemetryHistory.length} checkpoints logged
               </span>
             </div>
@@ -557,14 +605,15 @@ export default function TruckDetail() {
                     <th>Humidity</th>
                     <th>Door</th>
                     <th>Spoilage Risk</th>
-                    <th>RSL</th>
+                    <th>Good / Bad Env RSL</th>
+                    <th>LSTM Insurance</th>
                     <th>Route Advisory</th>
                   </tr>
                 </thead>
                 <tbody>
                   {telemetryHistory.map(row => (
                     <tr key={row.id} className="hover:bg-slate-800/40 text-xs">
-                      <td className="font-mono text-gray-300">{formatDateTime(row.created_at)}</td>
+                      <td className="font-mono text-gray-300">{formatDateTime(row.recorded_at || row.created_at)}</td>
                       <td className="font-mono font-semibold text-emerald-400">{row.connection_number || 'ESP32'}</td>
                       <td className="font-bold tabular-nums text-white">{row.temperature}°C</td>
                       <td className="tabular-nums text-gray-400">{row.target_temp}°C</td>
@@ -585,7 +634,14 @@ export default function TruckDetail() {
                           {row.spoilage_risk_level || 'LOW'}
                         </span>
                       </td>
-                      <td className="tabular-nums font-medium text-slate-200">{row.rsl_hours || row.shelf_life_remaining_hours || 168} hrs</td>
+                      <td className="tabular-nums font-medium text-slate-200">
+                        <span className="text-emerald-600">{row.good_env_rsl_hours ?? row.rsl_hours ?? '—'}h</span>
+                        {' / '}
+                        <span className="text-red-600">{row.bad_env_rsl_hours ?? '—'}h</span>
+                      </td>
+                      <td className="font-mono tabular-nums font-semibold">
+                        ${Number(row.predicted_insurance_price ?? truck?.current_insurance_price ?? 450).toFixed(2)}/mo
+                      </td>
                       <td className="text-gray-400 max-w-xs truncate">{row.route_recommendation || 'Route optimal'}</td>
                     </tr>
                   ))}

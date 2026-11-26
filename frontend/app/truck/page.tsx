@@ -185,20 +185,16 @@ export default function TruckPanel() {
     if (showLoading) setFetching(true);
     setLoadError('');
     try {
-      const assignment = await apiFetch('/api/truck/my-truck');
-      const t = assignment && typeof assignment === 'object' && 'truck' in assignment
-        ? assignment.truck
-        : assignment;
-      setTruck(t || null);
-      if (!t) {
-        setActiveTrip(null);
-        setIssuesList([]);
-        setTelemetryData(null);
-        return;
-      }
-      const [tripResponse, iss] = await Promise.all([
-        apiFetch('/api/truck/assigned-trip'),
-        apiFetch('/api/truck/issues'),
+      const [t, at, iss] = await Promise.all([
+        apiFetch('/api/truck/my-truck').catch((e: any) => {
+          // If 403 "No truck assigned", treat as null (not logged out)
+          if (e.message?.includes('No truck assigned') || e.message?.includes('assigned')) {
+            return null;
+          }
+          throw e;
+        }),
+        apiFetch('/api/truck/active-trip').catch(() => null),
+        apiFetch('/api/truck/issues').catch(() => []),
       ]);
       if (iss != null && !Array.isArray(iss)) throw new Error('GET /api/truck/issues returned an invalid issue response.');
       if (!tripResponse || tripResponse.success !== true || (tripResponse.trip !== null && typeof tripResponse.trip !== 'object')) {
@@ -207,7 +203,7 @@ export default function TruckPanel() {
       setActiveTrip(tripResponse.trip);
       setIssuesList(Array.isArray(iss) ? iss : []);
       if (t) setTempInput(String(t.target_temp_c));
-      await fetchTelemetry();
+      if (t) await fetchTelemetry();
     } catch (e: any) {
       setLoadError(e?.message || 'Could not load your assigned truck.');
     } finally {
@@ -397,11 +393,20 @@ export default function TruckPanel() {
   async function handleSetTemp(e: React.FormEvent) {
     e.preventDefault(); setSaving(true); setError('');
     try {
-      await apiFetch('/api/truck/target-temp', { method: 'PATCH', body: JSON.stringify({ targetTempC: parseFloat(tempInput) }) });
-      setSuccess(`Target temperature set to ${tempInput}°C`);
-      setShowTempForm(false); fetchAll();
-    } catch (e: any) { setError(e.message); }
-    finally { setSaving(false); }
+      const parsed = parseFloat(tempInput);
+      if (!Number.isFinite(parsed)) throw new Error('Please enter a valid temperature.');
+      await apiFetch('/api/truck/target-temp', {
+        method: 'PATCH',
+        body: JSON.stringify({ targetTempC: parsed }),
+      });
+      setSuccess(`Target temperature set to ${parsed}°C`);
+      setShowTempForm(false);
+      fetchAll();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function handleReportIssue(e: React.FormEvent) {
@@ -409,9 +414,14 @@ export default function TruckPanel() {
     try {
       await apiFetch('/api/truck/report-issue', { method: 'POST', body: JSON.stringify({ description: issueDesc }) });
       setSuccess('Issue reported to fleet manager.');
-      setShowIssue(false); setIssueDesc('');
-    } catch (e: any) { setError(e.message); }
-    finally { setSaving(false); }
+      setShowIssue(false);
+      setIssueDesc('');
+      await fetchAll();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -485,16 +495,188 @@ export default function TruckPanel() {
               <StatusBadge status={truck.status} />
             </div>
 
-            <div className="grid grid-cols-2 gap-3 text-sm mb-4">
-              <div className="p-3 rounded" style={{ background: 'var(--color-ivory)' }}>
-                <p className="text-xs uppercase tracking-wide mb-1" style={{ color: 'var(--color-slate)' }}>Capacity</p>
-                <p className="font-semibold tabular-nums text-lg">{truck.capacity_tons}T</p>
-              </div>
-              <div className="p-3 rounded cursor-pointer" style={{ background: 'var(--color-ivory)' }} onClick={() => setShowTempForm(true)}>
-                <p className="text-xs uppercase tracking-wide mb-1" style={{ color: 'var(--color-slate)' }}>Target Temp</p>
-                <p className="font-semibold tabular-nums text-lg" style={{ color: 'var(--color-gold)' }}>
-                  {truck.target_temp_c}°C <span className="text-xs" style={{ color: 'var(--color-slate)' }}>✏️</span>
-                </p>
+              {/* IoT Sensor & AI/ML Telemetry Section */}
+              <div className="card" style={{ border: '1px solid var(--color-hairline)' }}>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">📡</span>
+                    <div>
+                      <p className="font-semibold text-sm" style={{ color: 'var(--color-ink)' }}>IoT Sensor Gateway</p>
+                      <p className="text-xs" style={{ color: 'var(--color-slate)' }}>ESP32 Multi-Device Telemetry & AI Prediction</p>
+                    </div>
+                  </div>
+
+                  {telemetryData?.isIotConnected ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                        {telemetryData.connectionNumber || truck.iot_connection_number}
+                      </span>
+                      <button
+                        onClick={handleDisconnectIot}
+                        disabled={connectingIot}
+                        className="text-xs text-red-600 hover:underline"
+                      >
+                        Disconnect
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        fetchAvailableIotDevices();
+                        setShowPairModal(true);
+                      }}
+                      className="btn-primary text-xs px-3 py-1.5"
+                    >
+                      + Connect Sensor
+                    </button>
+                  )}
+                </div>
+
+                {telemetryData?.latest ? (
+                  <div className="space-y-3">
+                    {/* Real-Time Sensor Metrics */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+                      <div
+                        className="p-3 rounded"
+                        style={{
+                          background:
+                            Math.abs(Number(telemetryData.latest.temperature) - Number(truck.target_temp_c)) > 3
+                              ? '#FCE8E6'
+                              : Math.abs(Number(telemetryData.latest.temperature) - Number(truck.target_temp_c)) > 1
+                              ? '#FEF3D6'
+                              : '#E6F4EA',
+                        }}
+                      >
+                        <p className="text-xs uppercase tracking-wide text-slate-500 mb-0.5">
+                          {telemetryData.source === 'fallback' ? 'Simulated Temp' : telemetryData.isFresh ? 'Live Sensor Temp' : 'Stale Sensor Temp'}
+                        </p>
+                        <p className="text-2xl font-bold tabular-nums">
+                          {telemetryData.latest.temperature}°C
+                        </p>
+                        <p className="text-xs text-slate-500">Target: {truck.target_temp_c}°C</p>
+                      </div>
+
+                      <div className="p-3 rounded bg-slate-50">
+                        <p className="text-xs uppercase tracking-wide text-slate-500 mb-0.5">Humidity</p>
+                        <p className="text-xl font-bold tabular-nums">{telemetryData.latest.humidity}%</p>
+                        <p className="text-xs text-slate-500">Target: &lt;80%</p>
+                      </div>
+
+                      <div className="p-3 rounded bg-slate-50">
+                        <p className="text-xs uppercase tracking-wide text-slate-500 mb-0.5">Cargo Door</p>
+                        <span
+                          className={`text-xs font-bold px-2 py-1 rounded inline-block mt-1 ${
+                            telemetryData.latest.door_open
+                              ? 'bg-red-100 text-red-700'
+                              : 'bg-emerald-100 text-emerald-700'
+                          }`}
+                        >
+                          {telemetryData.latest.door_open ? '🚨 OPEN' : '🔒 Closed'}
+                        </span>
+                      </div>
+
+                      <div className="p-3 rounded bg-slate-50">
+                        <p className="text-xs uppercase tracking-wide text-slate-500 mb-0.5">Speed & GPS</p>
+                        <p className="text-sm font-semibold tabular-nums mt-0.5">
+                          {telemetryData.latest.gps?.speed_kmh || 48} km/h
+                        </p>
+                        <p className="text-xs text-slate-500">🔋 {telemetryData.latest.battery || 95}%</p>
+                      </div>
+                    </div>
+
+                    {/* AI Predictive Spoilage & Route Panel */}
+                    <div
+                      className="p-3.5 rounded border"
+                      style={{
+                        background:
+                          telemetryData.latest.spoilage_risk_level === 'CRITICAL'
+                            ? '#FEF2F2'
+                            : telemetryData.latest.spoilage_risk_level === 'HIGH'
+                            ? '#FFFBEB'
+                            : '#F0FDF4',
+                        borderColor:
+                          telemetryData.latest.spoilage_risk_level === 'CRITICAL'
+                            ? '#F87171'
+                            : telemetryData.latest.spoilage_risk_level === 'HIGH'
+                            ? '#FBBF24'
+                            : '#86EFAC',
+                      }}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
+                          <span>🤖</span> AI Spoilage & Shelf-Life Model
+                        </span>
+                        <span
+                          className={`text-xs font-bold px-2.5 py-1 rounded ${
+                            telemetryData.latest.spoilage_risk_level === 'CRITICAL'
+                              ? 'bg-red-600 text-white'
+                              : telemetryData.latest.spoilage_risk_level === 'HIGH'
+                              ? 'bg-amber-500 text-white'
+                              : 'bg-emerald-600 text-white'
+                          }`}
+                        >
+                          RISK: {telemetryData.latest.spoilage_risk_level || 'LOW'} ({telemetryData.latest.spoilage_risk || 0.05})
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs mb-2.5">
+                        <div className="p-2 rounded bg-white/70">
+                          <span className="text-slate-500 block">Remaining Shelf Life:</span>
+                          <strong className="font-semibold text-slate-800 text-sm">
+                            {telemetryData.latest.shelf_life_remaining_hours || 72} hrs
+                          </strong>
+                        </div>
+                        <div className="p-2 rounded bg-white/70">
+                          <span className="text-slate-500 block">Quality Retention:</span>
+                          <strong className="font-semibold text-slate-800 text-sm">
+                            {telemetryData.latest.quality_retention_pct || 96}%
+                          </strong>
+                        </div>
+                        <div className="p-2 rounded bg-white/70">
+                          <span className="text-slate-500 block">Logging Cadence:</span>
+                          <strong className="font-semibold text-emerald-800 text-sm">
+                            Every 15 min (Neon DB)
+                          </strong>
+                        </div>
+                      </div>
+
+                      {telemetryData.latest.route_recommendation && (
+                        <div
+                          className="text-xs p-2.5 rounded font-medium flex items-center justify-between gap-2"
+                          style={{
+                            background: telemetryData.latest.reroute_suggested ? '#FEE2E2' : '#DCFCE7',
+                            color: telemetryData.latest.reroute_suggested ? '#991B1B' : '#166534',
+                          }}
+                        >
+                          <span>{telemetryData.latest.route_recommendation}</span>
+                          {telemetryData.latest.reroute_suggested && (
+                            <button
+                              onClick={() => alert(`Rerouting accepted! Navigating to nearest safe cold hub: ${telemetryData.latest.nearest_safe_market || 'City Cold Depot'}`)}
+                              className="px-2.5 py-1 rounded bg-red-700 text-white font-bold hover:bg-red-800 shrink-0"
+                            >
+                              Navigate ↗
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-6 px-4">
+                    <p className="text-xs text-slate-500 mb-3">
+                      No IoT device currently transmitting to this truck. Pair with an active sensor in the IoT Simulator (:3001) using its Connection Number.
+                    </p>
+                    <button
+                      onClick={() => {
+                        fetchAvailableIotDevices();
+                        setShowPairModal(true);
+                      }}
+                      className="btn-ghost text-xs px-4 py-2 border border-slate-300"
+                    >
+                      🔌 Pair Connection Number
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 

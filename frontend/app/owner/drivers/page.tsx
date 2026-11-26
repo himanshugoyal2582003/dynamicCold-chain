@@ -7,9 +7,8 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Spinner, EmptyState, ErrorAlert, SuccessAlert, Modal } from '@/components/ui/shared';
 
 const NAV = [
-  { href: '/owner/trips', label: 'Trip Management', icon: '🛣️' },
-  { href: '/owner', label: 'My Fleet', icon: '🚛' },
-  { href: '/owner/tracking', label: 'Live Tracking', icon: '📍' },
+  { href: '/owner', label: 'Overview', icon: '🚛' },
+  { href: '/owner?tab=insurance', label: 'Insurance', icon: '🛡️' },
   { href: '/owner/drivers', label: 'Drivers', icon: '👤' },
 ];
 
@@ -87,6 +86,17 @@ export default function OwnerDrivers() {
     }
   }
 
+  async function handleDeleteDriver(id: string, name: string) {
+    if (!confirm(`Delete driver "${name}"? The driver will be unassigned from their truck.`)) return;
+    try {
+      await apiFetch(`/api/owner/drivers/${id}`, { method: 'DELETE' });
+      setSuccess(`Driver "${name}" deleted.`);
+      await loadData();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  }
+
   if (loading || !user) return null;
 
   return (
@@ -97,8 +107,8 @@ export default function OwnerDrivers() {
 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
           <div>
-            <h2 className="text-base font-bold text-white">Authorized Fleet Drivers</h2>
-            <p className="text-xs text-gray-400">
+            <h2 className="text-base font-bold text-slate-900">Authorized Fleet Drivers</h2>
+            <p className="text-xs text-slate-600">
               Per cold-chain security policy, drivers cannot self-register; fleet owners and administrators provision driver credentials.
             </p>
           </div>
@@ -115,39 +125,43 @@ export default function OwnerDrivers() {
           {fetching ? <Spinner /> : drivers.length === 0 ? (
             <EmptyState message="No drivers registered for your fleet yet. Click '+ Provision Driver' above to add one." icon="👤" />
           ) : (
-            <table className="data-table">
+            <table className="data-table min-w-[760px]">
               <thead>
                 <tr>
                   <th>Driver Name</th>
                   <th>Email Login</th>
                   <th>Assigned Truck Plate</th>
                   <th>Account Status</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
                 {drivers.map(d => (
-                  <tr key={d.id} className="hover:bg-slate-800/40">
-                    <td className="font-semibold text-white">{d.name}</td>
-                    <td className="font-mono text-xs text-gray-400">{d.email}</td>
+                  <tr key={d.id} className="hover:bg-slate-50">
+                    <td className="font-semibold text-slate-900">{d.name}</td>
+                    <td className="font-mono text-xs text-slate-600">{d.email}</td>
                     <td>
                       {d.truck_plate ? (
-                        <span className="font-mono text-xs font-bold text-amber-400 bg-amber-950/40 px-2 py-0.5 rounded border border-amber-500/30">
+                        <span className="font-mono text-xs font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
                           {d.truck_plate}
                         </span>
                       ) : (
-                        <span className="text-xs text-gray-500 italic">Unassigned</span>
+                        <span className="text-xs text-slate-400 italic">Unassigned</span>
                       )}
                     </td>
                     <td>
                       <span
                         className={`inline-block px-2 py-0.5 rounded text-xs font-bold uppercase ${
                           d.active
-                            ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-500/30'
-                            : 'bg-red-950/60 text-red-400 border border-red-500/30'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : 'bg-red-50 text-red-700 border border-red-200'
                         }`}
                       >
                         {d.active ? 'Active' : 'Inactive'}
                       </span>
+                    </td>
+                    <td>
+                      {d.active && <button className="btn-danger" onClick={() => handleDeleteDriver(d.id, d.name)}>Delete</button>}
                     </td>
                   </tr>
                 ))}

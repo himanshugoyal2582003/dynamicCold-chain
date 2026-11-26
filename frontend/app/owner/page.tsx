@@ -18,9 +18,8 @@ import {
 } from '@/components/ui/shared';
 
 const NAV = [
-  { href: '/owner/trips', label: 'Trip Management', icon: '🛣️' },
-  { href: '/owner', label: 'My Fleet', icon: '🚛' },
-  { href: '/owner/tracking', label: 'Live Tracking', icon: '📍' },
+  { href: '/owner', label: 'Overview', icon: '🚛' },
+  { href: '/owner?tab=insurance', label: 'Insurance', icon: '🛡️' },
   { href: '/owner/drivers', label: 'Drivers', icon: '👤' },
 ];
 
@@ -31,11 +30,16 @@ export default function OwnerDashboard() {
   const router = useRouter();
 
   // Active Tab
-  const [activeTab, setActiveTab] = useState<OwnerTab>('fleet');
+  const [activeTab, setActiveTab] = useState<OwnerTab>(() =>
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('tab') === 'insurance'
+      ? 'insurance'
+      : 'fleet',
+  );
 
   // Fleet state
   const [trucks, setTrucks] = useState<any[]>([]);
   const [drivers, setDrivers] = useState<any[]>([]);
+  const [lstmLogs, setLstmLogs] = useState<any[]>([]);
   const [fetching, setFetching] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -74,12 +78,14 @@ export default function OwnerDashboard() {
   async function loadData() {
     setFetching(true);
     try {
-      const [trucksData, driversData] = await Promise.all([
+      const [trucksData, driversData, logsData] = await Promise.all([
         apiFetch('/api/owner/trucks').catch(() => []),
         apiFetch('/api/owner/drivers').catch(() => []),
+        apiFetch('/api/owner/lstm-logs').catch(() => []),
       ]);
       setTrucks(trucksData);
       setDrivers(driversData);
+      setLstmLogs(Array.isArray(logsData) ? logsData : []);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -100,13 +106,15 @@ export default function OwnerDashboard() {
     setError('');
     setSuccess('');
     try {
+      const parsedCap = parseFloat(newCapacity);
+      const parsedTemp = parseFloat(newTargetTemp);
       await apiFetch('/api/owner/trucks', {
         method: 'POST',
         body: JSON.stringify({
           plate_number: newPlate.trim().toUpperCase(),
           type: newType,
-          capacity_tons: parseFloat(newCapacity) || 10.0,
-          target_temp_c: parseFloat(newTargetTemp) || 4.0,
+          capacity_tons: Number.isFinite(parsedCap) ? parsedCap : 10.0,
+          target_temp_c: Number.isFinite(parsedTemp) ? parsedTemp : 4.0,
           iot_connection_number: newIotConn ? newIotConn.trim().toUpperCase() : undefined,
         }),
       });
@@ -119,6 +127,30 @@ export default function OwnerDashboard() {
       setError(err.message);
     } finally {
       setSavingTruck(false);
+    }
+  }
+
+  async function handleDeleteTruck(id: string, plate: string) {
+    if (!confirm(`Delete truck "${plate}"? Its active trip will end and its driver will be unassigned.`)) return;
+    setError('');
+    try {
+      await apiFetch(`/api/owner/trucks/${id}`, { method: 'DELETE' });
+      setSuccess(`Truck "${plate}" deleted.`);
+      await loadData();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  }
+
+  async function handleDeleteDriver(id: string, name: string) {
+    if (!confirm(`Delete driver "${name}"? The driver will be unassigned from their truck.`)) return;
+    setError('');
+    try {
+      await apiFetch(`/api/owner/drivers/${id}`, { method: 'DELETE' });
+      setSuccess(`Driver "${name}" deleted.`);
+      await loadData();
+    } catch (err: any) {
+      setError(err.message);
     }
   }
 
@@ -236,18 +268,18 @@ export default function OwnerDashboard() {
         {success && <SuccessAlert message={success} />}
 
         {/* Tab Navigation Controls */}
-        <div className="flex border-b border-slate-800 pb-3 gap-2 overflow-x-auto">
+        <div className="flex flex-wrap gap-2 border-b pb-3" style={{ borderColor: 'var(--color-hairline)' }}>
           <button
-            onClick={() => { setActiveTab('fleet'); setSearch(''); }}
+            onClick={() => { setActiveTab('fleet'); setSearch(''); router.replace('/owner'); }}
             className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
               activeTab === 'fleet'
-                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800/60 border border-transparent'
+                ? 'bg-amber-100 text-amber-900 border border-amber-300 shadow-sm'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100 border border-transparent'
             }`}
           >
             <span>🚛</span>
             <span>My Fleet</span>
-            <span className="ml-1 text-xs px-2 py-0.5 rounded-full bg-slate-800/80 text-slate-300">
+            <span className="ml-1 text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
               {trucks.length}
             </span>
           </button>
@@ -256,37 +288,17 @@ export default function OwnerDashboard() {
             onClick={() => { setActiveTab('drivers'); setSearch(''); }}
             className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
               activeTab === 'drivers'
-                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800/60 border border-transparent'
+                ? 'bg-amber-100 text-amber-900 border border-amber-300 shadow-sm'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100 border border-transparent'
             }`}
           >
             <span>👤</span>
             <span>Drivers</span>
-            <span className="ml-1 text-xs px-2 py-0.5 rounded-full bg-slate-800/80 text-slate-300">
+            <span className="ml-1 text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
               {drivers.length}
             </span>
           </button>
 
-          <button
-            onClick={() => { setActiveTab('insurance'); setSearch(''); }}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
-              activeTab === 'insurance'
-                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800/60 border border-transparent'
-            }`}
-          >
-            <span>🛡️</span>
-            <span>Insurance for Each Truck</span>
-            {surchargedCount > 0 ? (
-              <span className="ml-1 text-xs px-2 py-0.5 rounded-full bg-amber-950/80 text-amber-400 border border-amber-500/30 font-mono">
-                {surchargedCount} At Risk
-              </span>
-            ) : (
-              <span className="ml-1 text-xs px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-400 border border-emerald-500/30 font-mono">
-                {discountedCount} Disc.
-              </span>
-            )}
-          </button>
         </div>
 
         {/* ============================================================== */}
@@ -316,13 +328,13 @@ export default function OwnerDashboard() {
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
               <div className="flex gap-3 flex-1 flex-wrap">
                 <input
-                  className="input-field max-w-xs"
+                  className="input-field min-w-0 flex-1 sm:max-w-xs"
                   placeholder="Search plate, type, driver or IoT ID…"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                 />
                 <select
-                  className="input-field w-auto"
+                  className="input-field w-full sm:w-auto sm:min-w-40"
                   value={statusFilter}
                   onChange={e => setStatusFilter(e.target.value)}
                 >
@@ -343,11 +355,11 @@ export default function OwnerDashboard() {
             </div>
 
             {/* Fleet Desktop Table */}
-            <div className="hidden md:block card p-0 overflow-x-auto">
+            <div className="hidden min-w-0 md:block card p-0 overflow-x-auto">
               {fetching ? <Spinner /> : filteredTrucks.length === 0 ? (
                 <EmptyState message="No trucks found matching your criteria." icon="🚛" />
               ) : (
-                <table className="data-table">
+                <table className="data-table min-w-[1040px]">
                   <thead>
                     <tr>
                       <th>Plate Number</th>
@@ -362,20 +374,20 @@ export default function OwnerDashboard() {
                   </thead>
                   <tbody>
                     {filteredTrucks.map(t => (
-                      <tr key={t.id} className="hover:bg-slate-800/40 transition-colors">
-                        <td className="font-mono font-semibold text-sm text-white">{t.plate_number}</td>
+                      <tr key={t.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="whitespace-nowrap font-mono font-semibold text-sm text-slate-900">{t.plate_number}</td>
                         <td style={{ color: 'var(--color-slate)', fontSize: 13 }}>
-                          <div>{t.type}</div>
-                          <span className="text-xs opacity-75">{t.capacity_tons}T</span>
+                          <div className="font-medium text-slate-800">{t.type}</div>
+                          <span className="text-xs text-slate-500">{t.capacity_tons}T</span>
                         </td>
                         <td>
                           {t.iot_connection_number ? (
-                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-mono font-semibold bg-emerald-950/40 text-emerald-400 border border-emerald-500/30">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                               {t.iot_connection_number}
                             </span>
                           ) : (
-                            <span className="text-xs text-gray-500 italic">None assigned</span>
+                            <span className="text-xs text-slate-400 italic">None assigned</span>
                           )}
                         </td>
                         <td className="font-semibold text-sm tabular-nums">
@@ -389,9 +401,12 @@ export default function OwnerDashboard() {
                           </div>
                         </td>
                         <td>
+                          <div className="flex min-w-[180px] items-center gap-2">
+                          <button className="btn-danger text-xs" onClick={() => handleDeleteTruck(t.id, t.plate_number)}>Delete</button>
                           <Link href={`/owner/trucks/${t.id}`} className="btn-ghost text-xs whitespace-nowrap">
                             View & Control →
                           </Link>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -405,17 +420,18 @@ export default function OwnerDashboard() {
               {fetching ? <Spinner /> : filteredTrucks.length === 0 ? (
                 <EmptyState message="No trucks found." icon="🚛" />
               ) : filteredTrucks.map(t => (
-                <Link key={t.id} href={`/owner/trucks/${t.id}`} className="block card hover:border-gold transition-colors">
+                <div key={t.id} className="card">
+                  <Link href={`/owner/trucks/${t.id}`} className="block hover:border-gold transition-colors">
                   <div className="flex items-start justify-between mb-2">
                     <div>
-                      <p className="font-mono font-semibold text-base text-white">{t.plate_number}</p>
+                  <p className="font-mono font-semibold text-base text-slate-900">{t.plate_number}</p>
                       <p className="text-xs mt-0.5" style={{ color: 'var(--color-slate)' }}>{t.type} • {t.capacity_tons}T</p>
                     </div>
                     <StatusBadge status={t.status} />
                   </div>
-                  <div className="grid grid-cols-2 gap-2 text-xs py-2 my-2 border-y border-slate-800 text-slate-300">
+                  <div className="grid grid-cols-2 gap-2 text-xs py-2 my-2 border-y border-slate-200 text-slate-700">
                     <div>
-                      <span className="text-gray-400">IoT Device: </span>
+                      <span className="text-slate-500">IoT Device: </span>
                       {t.iot_connection_number ? (
                         <span className="font-mono text-emerald-400 font-semibold">{t.iot_connection_number}</span>
                       ) : (
@@ -423,19 +439,21 @@ export default function OwnerDashboard() {
                       )}
                     </div>
                     <div>
-                      <span className="text-gray-400">Target: </span>
+                      <span className="text-slate-500">Target: </span>
                       <span className="font-semibold">{t.target_temp_c}°C</span>
                     </div>
                     <div>
-                      <span className="text-gray-400">Driver: </span>
+                      <span className="text-slate-500">Driver: </span>
                       <span>{t.driver_name || 'Unassigned'}</span>
                     </div>
                     <div>
-                      <span className="text-gray-400">Premium: </span>
+                      <span className="text-slate-500">Premium: </span>
                       <span className="text-amber-400 font-semibold">${t.current_insurance_price || 450}/mo</span>
                     </div>
                   </div>
-                </Link>
+                  </Link>
+                  <button className="btn-danger text-xs w-full mt-2" onClick={() => handleDeleteTruck(t.id, t.plate_number)}>Delete Truck</button>
+                </div>
               ))}
             </div>
           </div>
@@ -450,26 +468,26 @@ export default function OwnerDashboard() {
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               <div className="card p-4 flex items-center justify-between">
                 <div>
-                  <p className="text-2xl font-bold tabular-nums text-white">{drivers.length}</p>
-                  <p className="text-xs uppercase font-medium tracking-wide mt-1 text-gray-400">Total Fleet Drivers</p>
+                  <p className="text-2xl font-bold tabular-nums text-slate-900">{drivers.length}</p>
+                  <p className="text-xs uppercase font-medium tracking-wide mt-1 text-slate-500">Total Fleet Drivers</p>
                 </div>
                 <span className="text-2xl opacity-80">👤</span>
               </div>
               <div className="card p-4 flex items-center justify-between">
                 <div>
-                  <p className="text-2xl font-bold tabular-nums text-emerald-400">
+                  <p className="text-2xl font-bold tabular-nums text-emerald-700">
                     {drivers.filter(d => Boolean(d.truck_plate)).length}
                   </p>
-                  <p className="text-xs uppercase font-medium tracking-wide mt-1 text-gray-400">Assigned To Truck</p>
+                  <p className="text-xs uppercase font-medium tracking-wide mt-1 text-slate-500">Assigned To Truck</p>
                 </div>
                 <span className="text-2xl opacity-80">🚚</span>
               </div>
               <div className="card p-4 flex items-center justify-between">
                 <div>
-                  <p className="text-2xl font-bold tabular-nums text-amber-400">
+                  <p className="text-2xl font-bold tabular-nums text-amber-700">
                     {drivers.filter(d => !d.truck_plate).length}
                   </p>
-                  <p className="text-xs uppercase font-medium tracking-wide mt-1 text-gray-400">Unassigned Drivers</p>
+                  <p className="text-xs uppercase font-medium tracking-wide mt-1 text-slate-500">Unassigned Drivers</p>
                 </div>
                 <span className="text-2xl opacity-80">📋</span>
               </div>
@@ -478,7 +496,7 @@ export default function OwnerDashboard() {
             {/* Drivers Action & Search */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
               <input
-                className="input-field max-w-xs"
+                className="input-field min-w-0 flex-1 sm:max-w-xs"
                 placeholder="Search drivers by name, email, or truck…"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
@@ -497,7 +515,7 @@ export default function OwnerDashboard() {
               {fetching ? <Spinner /> : filteredDrivers.length === 0 ? (
                 <EmptyState message="No drivers found matching your search. Click '+ Provision Driver' to add one." icon="👤" />
               ) : (
-                <table className="data-table">
+                <table className="data-table min-w-[900px]">
                   <thead>
                     <tr>
                       <th>Driver Name</th>
@@ -505,28 +523,29 @@ export default function OwnerDashboard() {
                       <th>Assigned Vehicle</th>
                       <th>Account Status</th>
                       <th>Quick Reassign Truck</th>
+                      <th>Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredDrivers.map(d => (
-                      <tr key={d.id} className="hover:bg-slate-800/40">
-                        <td className="font-semibold text-white">{d.name}</td>
-                        <td className="font-mono text-xs text-gray-400">{d.email}</td>
+                      <tr key={d.id} className="hover:bg-slate-50">
+                        <td className="font-semibold text-slate-900">{d.name}</td>
+                        <td className="font-mono text-xs text-slate-600">{d.email}</td>
                         <td>
                           {d.truck_plate ? (
-                            <span className="font-mono text-xs font-bold text-amber-400 bg-amber-950/40 px-2 py-0.5 rounded border border-amber-500/30">
+                            <span className="font-mono text-xs font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
                               {d.truck_plate}
                             </span>
                           ) : (
-                            <span className="text-xs text-gray-500 italic">Unassigned</span>
+                            <span className="text-xs text-slate-400 italic">Unassigned</span>
                           )}
                         </td>
                         <td>
                           <span
                             className={`inline-block px-2 py-0.5 rounded text-xs font-bold uppercase ${
                               d.active
-                                ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-500/30'
-                                : 'bg-red-950/60 text-red-400 border border-red-500/30'
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : 'bg-red-50 text-red-700 border border-red-200'
                             }`}
                           >
                             {d.active ? 'Active' : 'Inactive'}
@@ -551,6 +570,62 @@ export default function OwnerDashboard() {
                             ))}
                           </select>
                         </td>
+                        <td>
+                          {d.active && <button className="btn-danger text-xs" onClick={() => handleDeleteDriver(d.id, d.name)}>Delete</button>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* 1-Minute Neon DB LSTM Spoilage & Insurance Ledger */}
+            <div className="card p-0 overflow-x-auto">
+              <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">1-Minute LSTM Spoilage & Insurance History (Neon DB)</h3>
+                  <p className="text-xs text-slate-500">
+                    Per-minute SpoilageLSTM (Good vs. Bad environment shelf-life) and InsuranceLSTM premium predictions.
+                  </p>
+                </div>
+                <span className="text-xs font-mono text-slate-500">{lstmLogs.length} records</span>
+              </div>
+              {lstmLogs.length === 0 ? (
+                <EmptyState message="No 1-minute LSTM logs recorded yet." icon="📊" />
+              ) : (
+                <table className="data-table min-w-[1040px]">
+                  <thead>
+                    <tr>
+                      <th>Recorded At</th>
+                      <th>Truck</th>
+                      <th>Temp / Target</th>
+                      <th>Humidity</th>
+                      <th>Spoilage Risk</th>
+                      <th>Good Env RSL</th>
+                      <th>Bad Env RSL</th>
+                      <th>LSTM Insurance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lstmLogs.slice(0, 50).map((row) => (
+                      <tr key={row.id} className="text-xs">
+                        <td className="font-mono whitespace-nowrap">{new Date(row.recorded_at).toLocaleString()}</td>
+                        <td className="font-mono font-semibold">{row.plate_number}</td>
+                        <td className="tabular-nums">{row.temperature}°C / {row.target_temp}°C</td>
+                        <td className="tabular-nums">{row.humidity}%</td>
+                        <td>
+                          <span className="font-semibold">{row.spoilage_risk_level}</span> ({row.spoilage_risk})
+                        </td>
+                        <td className="tabular-nums text-emerald-700 font-semibold">
+                          {row.good_env_rsl_hours ?? row.rsl_hours ?? '—'} hrs
+                        </td>
+                        <td className="tabular-nums text-red-700 font-semibold">
+                          {row.bad_env_rsl_hours ?? '—'} hrs
+                        </td>
+                        <td className="font-mono font-semibold tabular-nums">
+                          ${Number(row.predicted_insurance_price ?? row.truck_current_price ?? 450).toFixed(2)}/mo
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -568,43 +643,51 @@ export default function OwnerDashboard() {
             {/* Insurance Overview Cards */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="card p-4">
-                <p className="text-2xl font-bold tabular-nums text-amber-400">${avgPremium}<span className="text-xs text-gray-400 font-normal">/mo</span></p>
-                <p className="text-xs uppercase font-medium tracking-wide mt-1 text-gray-400">Average Premium / Truck</p>
+                <p className="text-2xl font-bold tabular-nums text-amber-700">${avgPremium}<span className="text-xs text-slate-500 font-normal">/mo</span></p>
+                <p className="text-xs uppercase font-medium tracking-wide mt-1 text-slate-500">Average Premium / Truck</p>
               </div>
 
               <div className="card p-4">
-                <p className="text-2xl font-bold tabular-nums text-emerald-400">{discountedCount}</p>
-                <p className="text-xs uppercase font-medium tracking-wide mt-1 text-gray-400">Discounted Fleet (Safe Temp)</p>
+                <p className="text-2xl font-bold tabular-nums text-emerald-700">{discountedCount}</p>
+                <p className="text-xs uppercase font-medium tracking-wide mt-1 text-slate-500">Discounted Fleet (Safe Temp)</p>
               </div>
 
               <div className="card p-4">
-                <p className="text-2xl font-bold tabular-nums text-red-400">{surchargedCount}</p>
-                <p className="text-xs uppercase font-medium tracking-wide mt-1 text-gray-400">Surcharged (Thermal Excursion)</p>
+                <p className="text-2xl font-bold tabular-nums text-red-700">{surchargedCount}</p>
+                <p className="text-xs uppercase font-medium tracking-wide mt-1 text-slate-500">Surcharged (Thermal Excursion)</p>
               </div>
 
               <div className="card p-4">
-                <p className="text-2xl font-bold tabular-nums text-yellow-400">{expiringCount}</p>
-                <p className="text-xs uppercase font-medium tracking-wide mt-1 text-gray-400">Policies Expiring ≤ 7 Days</p>
+                <p className="text-2xl font-bold tabular-nums text-amber-600">{expiringCount}</p>
+                <p className="text-xs uppercase font-medium tracking-wide mt-1 text-slate-500">Policies Expiring ≤ 7 Days</p>
               </div>
             </div>
 
             {/* Insurance Notice Banner */}
-            <div className="p-4 rounded-lg bg-slate-900/80 border border-amber-500/30 text-xs text-slate-300 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+            <div className="card p-4 border border-amber-200 bg-amber-50/60 text-xs text-slate-700 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <span className="text-lg">⚡</span>
                 <div>
-                  <span className="font-bold text-amber-400">Dynamic IoT Underwriting Active:</span>
-                  <span className="text-gray-300 ml-1">
-                    Insurance premiums automatically adjust based on IoT real-time temperature stability, door-opening frequency, and route incident history.
+                  <span className="font-bold text-amber-800">Dual-LSTM Underwriting Active:</span>
+                  <span className="text-slate-600 ml-1">
+                    Insurance premiums automatically adjust via InsuranceLSTM using Admin base rates, SpoilageLSTM predictions, and 1-minute Neon DB logs.
                   </span>
                 </div>
               </div>
-              <input
-                className="input-field text-xs max-w-xs"
-                placeholder="Filter trucks by plate or driver…"
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-              />
+              <div className="no-print flex items-center gap-2 w-full md:w-auto">
+                <input
+                  className="input-field text-xs max-w-xs"
+                  placeholder="Filter trucks by plate or driver…"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                />
+                <button
+                  onClick={() => window.print()}
+                  className="btn-primary text-xs whitespace-nowrap"
+                >
+                  🖨️ Print / Export PDF
+                </button>
+              </div>
             </div>
 
             {/* Insurance Table for Each Truck */}
@@ -612,7 +695,7 @@ export default function OwnerDashboard() {
               {fetching ? <Spinner /> : filteredTrucks.length === 0 ? (
                 <EmptyState message="No vehicles found in fleet." icon="🛡️" />
               ) : (
-                <table className="data-table">
+                <table className="data-table min-w-[1120px]">
                   <thead>
                     <tr>
                       <th>Truck & Specs</th>
@@ -637,7 +720,7 @@ export default function OwnerDashboard() {
                       return (
                         <tr key={t.id} className="hover:bg-slate-800/40 transition-colors">
                           <td>
-                            <div className="font-mono font-semibold text-white text-sm">{t.plate_number}</div>
+                            <div className="whitespace-nowrap font-mono font-semibold text-slate-900 text-sm">{t.plate_number}</div>
                             <div className="text-xs text-gray-400">{t.type} • {t.capacity_tons}T</div>
                           </td>
 
@@ -738,6 +821,59 @@ export default function OwnerDashboard() {
                         </tr>
                       );
                     })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* 1-Minute Neon DB LSTM Spoilage & Insurance Ledger */}
+            <div className="card p-0 overflow-x-auto">
+              <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">1-Minute LSTM Spoilage & Insurance History (Neon DB)</h3>
+                  <p className="text-xs text-slate-500">
+                    Per-minute SpoilageLSTM (Good vs. Bad environment shelf-life) and InsuranceLSTM premium predictions.
+                  </p>
+                </div>
+                <span className="text-xs font-mono text-slate-500">{lstmLogs.length} records</span>
+              </div>
+              {lstmLogs.length === 0 ? (
+                <EmptyState message="No 1-minute LSTM logs recorded yet." icon="📊" />
+              ) : (
+                <table className="data-table min-w-[1040px]">
+                  <thead>
+                    <tr>
+                      <th>Recorded At</th>
+                      <th>Truck</th>
+                      <th>Temp / Target</th>
+                      <th>Humidity</th>
+                      <th>Spoilage Risk</th>
+                      <th>Good Env RSL</th>
+                      <th>Bad Env RSL</th>
+                      <th>LSTM Insurance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lstmLogs.slice(0, 50).map((row) => (
+                      <tr key={row.id} className="text-xs">
+                        <td className="font-mono whitespace-nowrap">{new Date(row.recorded_at).toLocaleString()}</td>
+                        <td className="font-mono font-semibold">{row.plate_number}</td>
+                        <td className="tabular-nums">{row.temperature}°C / {row.target_temp}°C</td>
+                        <td className="tabular-nums">{row.humidity}%</td>
+                        <td>
+                          <span className="font-semibold">{row.spoilage_risk_level}</span> ({row.spoilage_risk})
+                        </td>
+                        <td className="tabular-nums text-emerald-700 font-semibold">
+                          {row.good_env_rsl_hours ?? row.rsl_hours ?? '—'} hrs
+                        </td>
+                        <td className="tabular-nums text-red-700 font-semibold">
+                          {row.bad_env_rsl_hours ?? '—'} hrs
+                        </td>
+                        <td className="font-mono font-semibold tabular-nums">
+                          ${Number(row.predicted_insurance_price ?? row.truck_current_price ?? 450).toFixed(2)}/mo
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               )}
