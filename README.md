@@ -36,8 +36,16 @@ flowchart LR
   - `SpoilageLSTM` predicts `spoilage_risk`, `spoilage_risk_level`, `shelf_life_remaining_hours`, `quality_retention_pct`, and **Good vs. Bad Environment** remaining shelf-life.
   - `InsuranceLSTM` evaluates thermal excursions, door-seal events, and trip history anchored on Admin-configured base prices (`₹/mo`) to compute dynamic monthly premiums.
   - `IotService` persists 1-minute `SpoilageLSTM` + `InsuranceLSTM` snapshots to `trip_telemetry_history` in Neon Postgres and updates `iot_devices.last_seen` on every sensor ingest.
-- **Real-Time 4-Second Telemetry Sync**:
-  - Both Owner (`/owner/trucks/[id]`) and Driver (`/truck`) poll live telemetry every **4 seconds**, matching the IoT Simulator's auto-stream cadence.
+  - **ML Evaluation Pipeline (`ai-ml/evaluate_lstm.py`)**: 70% train / 15% validation / 15% held-out test split on synthetic benchmark sequences (`ai-ml/artifacts/eval_report.json`):
+    - `SpoilageLSTM` (test): Risk MAE `0.0347`, RMSE `0.0639` (vs. mean baseline MAE `0.4326`), High-Risk ROC-AUC `1.0`.
+    - `InsuranceLSTM` (test): Risk Score MAE `0.82`, RMSE `1.54` (vs. mean baseline MAE `31.87`).
+    - *Note*: These metrics validate learning on synthetic benchmark sequences; real-world refrigerated cargo accuracy requires empirical trip validation.
+- **Telemetry Pipeline Cadence & Hardening**:
+  - **IoT Simulator**: 4s auto-stream → **AI/ML** (`POST /api/iot/process`) → **Backend** (`POST /api/iot/ingest`).
+  - **Active-Trip Loop**: 5s fallback capture in `IotService` (skipped whenever fresh `< 30s` physical sensor readings exist).
+  - **Neon DB Snapshots**: 60s throttle per truck into `trip_telemetry_history`.
+  - **Frontend Live Sync**: 4s telemetry polling on both Owner and Driver views.
+  - **Production Security**: Mandatory `JWT_SECRET`, `IOT_INGEST_SECRET`, `AIML_SERVICE_TOKEN` (`timingSafeEqual`), strict `CORS_ORIGIN`, cookie-only JWT + fail-closed driver DB verification, CSRF token enforcement, and versioned SQL migrations (`backend/db/migrations/`).
 
 ---
 

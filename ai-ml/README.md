@@ -9,9 +9,16 @@ FastAPI inference service running **SpoilageLSTM** (`artifacts/spoilage_lstm.pt`
 ```powershell
 cd ai-ml
 pip install -r requirements.txt
-python train_lstm.py   # Optional: regenerate synthetic data & retrain models
+python train_lstm.py      # Optional: regenerate synthetic data & retrain models
+python evaluate_lstm.py   # Train on 70% split & evaluate on 15% held-out test split
+python -m unittest -v test_aiml.py
 python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
+
+### Synthetic Benchmark Evaluation (`artifacts/eval_report.json`)
+- **SpoilageLSTM** (held-out 15% test split): Risk MAE `0.0347`, RMSE `0.0639` (mean baseline MAE `0.4326`), High-Risk ROC-AUC `1.0`, RSL Ratio MAE `0.0103`.
+- **InsuranceLSTM** (held-out 15% test split): Risk Score MAE `0.82`, RMSE `1.54` (mean baseline MAE `31.87`), Multiplier MAE `0.0119`.
+- *Disclaimer*: Evaluated on synthetic ColdChain sequences; empirical refrigerated cargo logs are required for real-world accuracy claims.
 
 ### Key Endpoints
 - `GET /health` — Service & LSTM model status
