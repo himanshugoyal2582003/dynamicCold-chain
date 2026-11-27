@@ -6,16 +6,10 @@ dotenv.config({ path: path.resolve(__dirname, '../../../.env.local') });
 
 import { neon } from '@neondatabase/serverless';
 import * as bcrypt from 'bcryptjs';
+import { Pool } from 'pg';
 
-async function initDb() {
-  console.log('--- Initializing Neon Postgres Schema & Seed Data ---');
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) {
-    console.error('ERROR: DATABASE_URL not set in environment.');
-    process.exit(1);
-  }
-
-  const sql = neon(databaseUrl);
+async function initDb(sql: (parts: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, any>[]>) {
+  console.log('--- Initializing PostgreSQL Schema & Seed Data ---');
 
   console.log('1. Creating tables...');
 
@@ -55,11 +49,6 @@ async function initDb() {
       insurance_expiry DATE,
       permit_expiry DATE,
       fitness_expiry DATE,
-      iot_connection_number VARCHAR(50),
-      base_insurance_price NUMERIC(8,2) DEFAULT 450.00,
-      current_insurance_price NUMERIC(8,2) DEFAULT 450.00,
-      insurance_risk_score NUMERIC(5,2) DEFAULT 15.0,
-      insurance_status VARCHAR(20) DEFAULT 'discounted',
       active BOOLEAN DEFAULT true,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -368,7 +357,27 @@ async function initDb() {
   console.log('✅ Database schema and demo dataset successfully initialized!');
 }
 
-initDb().catch((err) => {
+async function initialize() {
+  const connectionString = process.env.DATABASE_URL?.trim();
+  if (!connectionString) throw new Error('DATABASE_URL is required.');
+  const host = new URL(connectionString).hostname;
+  if (process.env.NEON_USE_HTTP === 'true' || host === 'neon.tech' || host.endsWith('.neon.tech')) {
+    await initDb(neon(connectionString));
+    return;
+  }
+
+  const pool = new Pool({ connectionString });
+  try {
+    await initDb(async (parts, ...values) => {
+      const query = parts.reduce((text, part, index) => index === 0 ? part : text + '$' + index + part, '');
+      return (await pool.query(query, values)).rows;
+    });
+  } finally {
+    await pool.end();
+  }
+}
+
+initialize().catch((err) => {
   console.error('Fatal initialization error:', err);
   process.exit(1);
 });

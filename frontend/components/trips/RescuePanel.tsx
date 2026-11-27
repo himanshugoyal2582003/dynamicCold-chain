@@ -81,7 +81,12 @@ function metric(value: number | null, suffix: string) {
   return value === null ? 'Unavailable' : `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${suffix}`;
 }
 
-export default function RescuePanel({ tripId, role, tripStatus }: { tripId: string; role: Role; tripStatus: string }) {
+export default function RescuePanel({ tripId, role, tripStatus, gpsSynced = true }: {
+  tripId: string;
+  role: Role;
+  tripStatus: string;
+  gpsSynced?: boolean;
+}) {
   const path = `/api/trips/${tripId}/rescue`;
   const heading = useId();
   const [events, setEvents] = useState<RescueEvent[] | null>(null);
@@ -137,7 +142,7 @@ export default function RescuePanel({ tripId, role, tripStatus }: { tripId: stri
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (!active || !pending || active.id !== pending.eventId || busy) return;
+    if (!active || !pending || active.id !== pending.eventId || busy || (pending.action === 'STARTED' && !gpsSynced)) return;
     void mutate(async () => {
       await apiFetch(`${path}/${active.id}/decisions`, {
         method: 'POST',
@@ -171,7 +176,9 @@ export default function RescuePanel({ tripId, role, tripStatus }: { tripId: stri
     {error && <ErrorAlert message={error} />}
     {notice && <p role="status" className="text-sm text-slate-700">{notice}</p>}
     {events === null && !error && <p role="status" className="text-sm text-slate-600">Loading rescue history…</p>}
-    {events !== null && !active && isInProgress && <button type="button" className="btn-primary text-sm" disabled={busy} onClick={() => {
+    {!gpsSynced && isInProgress && (!active || active.status === 'APPROVED') &&
+      <p role="status" className="text-sm text-slate-600">Start GPS location sharing and wait for the server to receive a fix.</p>}
+    {events !== null && !active && isInProgress && <button type="button" className="btn-primary text-sm" disabled={busy || !gpsSynced} onClick={() => {
       void mutate(async () => {
         const result = await apiFetch<{ requiresRescue: boolean }>(path, { method: 'POST' });
         if (!result.requiresRescue) setNotice('Current sensor and LSTM readings are below the rescue threshold.');
@@ -216,7 +223,7 @@ export default function RescuePanel({ tripId, role, tripStatus }: { tripId: stri
       </div>}
       <div className="flex flex-wrap gap-2">
         {manager && ['PENDING_APPROVAL', 'APPROVED'].includes(active.status) && <button type="button" className="btn-ghost" disabled={busy} onClick={() => openDecision('REJECTED')}>Reject rescue</button>}
-        {role === 'truckUser' && active.status === 'APPROVED' && isInProgress && !expired && <button type="button" className="btn-primary" disabled={busy} onClick={() => openDecision('STARTED')}>Start approved diversion</button>}
+        {role === 'truckUser' && active.status === 'APPROVED' && isInProgress && !expired && <button type="button" className="btn-primary" disabled={busy || !gpsSynced} onClick={() => openDecision('STARTED')}>Start approved diversion</button>}
         {active.status === 'REROUTING' && <button type="button" className="btn-primary" disabled={busy} onClick={() => openDecision('COMPLETED')}>Confirm cargo handoff</button>}
         {manager && active.status === 'REROUTING' && <button type="button" className="btn-ghost" disabled={busy} onClick={() => openDecision('CANCELLED')}>Record failed diversion</button>}
       </div>
@@ -231,7 +238,7 @@ export default function RescuePanel({ tripId, role, tripStatus }: { tripId: stri
         <label className="block">Decision notes
           <textarea className="input-field w-full" required maxLength={1000} value={reason} onChange={e => setReason(e.target.value)} />
         </label>
-        <button type="submit" className="btn-primary" disabled={busy}>Record decision</button>
+        <button type="submit" className="btn-primary" disabled={busy || (pending.action === 'STARTED' && !gpsSynced)}>Record decision</button>
         <button type="button" className="btn-ghost" disabled={busy} onClick={() => setPending(null)}>Close</button>
       </form>}
     </>}

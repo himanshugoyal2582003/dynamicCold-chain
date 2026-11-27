@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useLayoutEffect, useRef } from 'react';
 import { useAuth, apiFetch } from '@/lib/auth';
+import { ApiResponseError } from '@/lib/api-client';
 import { useRouter } from 'next/navigation';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import RescuePanel from '@/components/trips/RescuePanel';
@@ -54,6 +55,14 @@ interface GpsPosition {
 }
 
 // ─── Skeleton ─────────────────────────────────────────────────────────────────
+interface GpsSession {
+  controller: AbortController;
+  queue: GpsPosition[];
+  lastFix: GpsPosition | null;
+  lastQueuedAt: number;
+  sending: boolean;
+  expiry?: ReturnType<typeof setTimeout>;
+}
 function SkeletonCard({ rows = 3 }: { rows?: number }) {
   return (
     <div className="card animate-pulse space-y-3">
@@ -165,13 +174,13 @@ export default function TruckPanel() {
   const [gpsStatus, setGpsStatus] = useState<GpsStatus>('idle');
   const [gpsPosition, setGpsPosition] = useState<GpsPosition | null>(null);
   const [gpsLastUpdate, setGpsLastUpdate] = useState<Date | null>(null);
+  const [gpsSynced, setGpsSynced] = useState(false);
+  const gpsSessionRef = useRef<GpsSession | null>(null);
   const watchIdRef = useRef<number | null>(null);
   const locationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── Route state ──
 
-  // ── Offline GPS queue ──
-  const offlineQueueRef = useRef<GpsPosition[]>([]);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Auth guard
@@ -254,58 +263,56 @@ export default function TruckPanel() {
   // ─────────────────────────────────────────────────────────────────────────────
   // ─────────────────────────────────────────────────────────────────────────────
   // GPS tracking
-  const sendLocationToServer = useCallback(async (pos: GpsPosition) => {
+  const flushGps = useCallback(async (session: GpsSession) => {
+    if (gpsSessionRef.current !== session || session.sending || !navigator.onLine) return;
+    session.sending = true;
     try {
-      await apiFetch('/api/tracking/location', {
-        method: 'POST',
-        body: JSON.stringify({
-          latitude: pos.latitude,
-          longitude: pos.longitude,
-          accuracy_m: pos.accuracy_m,
-          speed_kmh: pos.speed_kmh,
-          heading: pos.heading,
-          timestamp: pos.timestamp,
-        }),
-      });
-    } catch {
-      // Push to offline queue (max 50 items) if fetch fails
-      offlineQueueRef.current.push(pos);
-      if (offlineQueueRef.current.length > 50) {
-        offlineQueueRef.current = offlineQueueRef.current.slice(-50);
-      }
-    }
-  }, []);
-
-  // Drain offline queue every 30 seconds when online
-  useEffect(() => {
-    const drainInterval = setInterval(async () => {
-      if (!navigator.onLine || offlineQueueRef.current.length === 0) return;
-      const queue = [...offlineQueueRef.current];
-      offlineQueueRef.current = [];
-      for (const pos of queue) {
+      while (gpsSessionRef.current === session && session.queue.length) {
+        const position = session.queue[0];
+        const recordedAt = Date.parse(position.timestamp);
+        // Tracking accepts recent breadcrumbs. Only a fresh fix can unlock rescue.
+        if (Date.now() - recordedAt > 300000) {
+          session.queue.shift();
+          continue;
+        }
         try {
           await apiFetch('/api/tracking/location', {
             method: 'POST',
-            body: JSON.stringify({
-              latitude: pos.latitude,
-              longitude: pos.longitude,
-              accuracy_m: pos.accuracy_m,
-              speed_kmh: pos.speed_kmh,
-              heading: pos.heading,
-              timestamp: pos.timestamp,
-            }),
+            body: JSON.stringify(position),
+            signal: session.controller.signal,
           });
-        } catch {
-          // Re-queue failed items (best-effort)
-          offlineQueueRef.current.unshift(pos);
+        } catch (error) {
+          if (gpsSessionRef.current === session && error instanceof ApiResponseError && error.status === 400) {
+            if (session.queue[0] === position) session.queue.shift();
+            continue;
+          }
+          // Keep this fix for an online or periodic retry in the same session.
+          return;
+        }
+        if (gpsSessionRef.current !== session) return;
+        if (session.queue[0] === position) session.queue.shift();
+        clearTimeout(session.expiry);
+        const remaining = recordedAt + 60000 - Date.now();
+        setGpsSynced(remaining > 0);
+        if (remaining > 0) {
+          session.expiry = setTimeout(() => {
+            if (gpsSessionRef.current === session) setGpsSynced(false);
+          }, remaining);
         }
       }
-    }, 30000);
-
-    return () => clearInterval(drainInterval);
+    } finally {
+      session.sending = false;
+    }
   }, []);
 
   const stopGps = useCallback(() => {
+    const session = gpsSessionRef.current;
+    gpsSessionRef.current = null;
+    if (session) {
+      clearTimeout(session.expiry);
+      session.controller.abort();
+      session.queue.length = 0;
+    }
     if (watchIdRef.current !== null) {
       navigator.geolocation.clearWatch(watchIdRef.current);
       watchIdRef.current = null;
@@ -314,57 +321,93 @@ export default function TruckPanel() {
       clearInterval(locationIntervalRef.current);
       locationIntervalRef.current = null;
     }
+    setGpsSynced(false);
     setGpsStatus('idle');
   }, []);
 
+  const trackingTripKey = activeTrip?.status === 'IN_PROGRESS'
+    ? JSON.stringify([activeTrip.id, activeTrip.started_at])
+    : null;
+
+  useLayoutEffect(() => {
+    setGpsPosition(null);
+    setGpsLastUpdate(null);
+    return stopGps;
+  }, [trackingTripKey, stopGps]);
+
+  useEffect(() => {
+    function retryOnline() {
+      const session = gpsSessionRef.current;
+      if (session) void flushGps(session);
+    }
+    window.addEventListener('online', retryOnline);
+    return () => window.removeEventListener('online', retryOnline);
+  }, [flushGps]);
+
   const startGps = useCallback(() => {
+    if (!trackingTripKey) return;
     if (!('geolocation' in navigator)) {
       setGpsStatus('no_signal');
       return;
     }
+    stopGps();
     setGpsStatus('acquiring');
+    const session: GpsSession = {
+      controller: new AbortController(),
+      queue: [],
+      lastFix: null,
+      lastQueuedAt: 0,
+      sending: false,
+    };
+    gpsSessionRef.current = session;
+    const startedAt = Date.parse(activeTrip?.started_at);
+
+    function queueLatest() {
+      if (gpsSessionRef.current !== session) return;
+      const position = session.lastFix;
+      if (position && Date.parse(position.timestamp) > session.lastQueuedAt) {
+        session.lastQueuedAt = Date.parse(position.timestamp);
+        session.queue.push(position);
+        if (session.queue.length > 50) session.queue.shift();
+      }
+      void flushGps(session);
+    }
 
     watchIdRef.current = navigator.geolocation.watchPosition(
       (pos) => {
-        const p: GpsPosition = {
+        if (gpsSessionRef.current !== session) return;
+        const recordedAt = pos.timestamp;
+        if (!Number.isFinite(recordedAt) || recordedAt < startedAt ||
+            recordedAt > Date.now() + 5000 || Date.now() - recordedAt >= 60000 ||
+            (session.lastFix && recordedAt <= Date.parse(session.lastFix.timestamp))) return;
+        const firstFix = session.lastFix === null;
+        const position: GpsPosition = {
           latitude: pos.coords.latitude,
           longitude: pos.coords.longitude,
           accuracy_m: pos.coords.accuracy,
           speed_kmh: pos.coords.speed ? pos.coords.speed * 3.6 : 0,
           heading: pos.coords.heading,
-          timestamp: new Date().toISOString(),
+          timestamp: new Date(recordedAt).toISOString(),
         };
-        setGpsPosition(p);
-        setGpsLastUpdate(new Date());
+        session.lastFix = position;
+        setGpsPosition(position);
+        setGpsLastUpdate(new Date(recordedAt));
         setGpsStatus('active');
-
-        // Keep latest pos for interval sends
-        gpsPositionRef.current = p;
+        if (firstFix) queueLatest();
       },
       (err) => {
-        if (err.code === err.PERMISSION_DENIED) setGpsStatus('denied');
-        else setGpsStatus('no_signal');
+        if (gpsSessionRef.current !== session) return;
+        if (err.code === err.PERMISSION_DENIED) {
+          stopGps();
+          setGpsStatus('denied');
+        } else {
+          setGpsStatus('no_signal');
+        }
       },
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 }
     );
-
-    // Send every 15 seconds
-    locationIntervalRef.current = setInterval(() => {
-      if (gpsPositionRef.current) sendLocationToServer(gpsPositionRef.current);
-    }, 15000);
-  }, [sendLocationToServer]);
-
-  // Mutable ref for latest GPS position (avoids stale closure in interval)
-  const gpsPositionRef = useRef<GpsPosition | null>(null);
-  useEffect(() => { gpsPositionRef.current = gpsPosition; }, [gpsPosition]);
-
-  // Stop GPS on unmount
-  useEffect(() => () => stopGps(), [stopGps]);
-
-  // Stop GPS when trip ends
-  useEffect(() => {
-    if (activeTrip?.status !== 'IN_PROGRESS' && gpsStatus === 'active') stopGps();
-  }, [activeTrip, gpsStatus, stopGps]);
+    locationIntervalRef.current = setInterval(queueLatest, 15000);
+  }, [activeTrip?.started_at, flushGps, stopGps, trackingTripKey]);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Alert computation
@@ -788,7 +831,7 @@ export default function TruckPanel() {
             </div>
 
             <div className="lg:col-span-5 space-y-5">
-              {activeTrip?.status === 'IN_PROGRESS' && <RescuePanel key={activeTrip.id} tripId={activeTrip.id} tripStatus={activeTrip.status} role="truckUser" />}
+              {activeTrip?.status === 'IN_PROGRESS' && <RescuePanel key={activeTrip.id} tripId={activeTrip.id} tripStatus={activeTrip.status} role="truckUser" gpsSynced={gpsSynced} />}
           {/* ── 2. ACTIVE TRIP / START TRIP ─────────────────────────────── */}
           {activeTrip ? (
             <div className="card" style={{ border: '1px solid var(--status-on-trip)', background: '#D8E5F210' }}>
