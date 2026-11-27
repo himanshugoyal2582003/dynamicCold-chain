@@ -128,30 +128,26 @@ class ColdChainLSTMEngine:
         if spoilage_risk >= 0.75 or quality_pct < 30.0 or abs_dev >= tolerance * 3.0:
             risk_level = "CRITICAL"
             env_condition = "BAD_CRITICAL"
-            route_rec = "CRITICAL SPOILAGE ALERT (LSTM): Rapid thermal excursion! Reroute immediately to nearest cold storage."
+            route_rec = "Critical spoilage risk. Review cargo rescue with dispatch."
             reroute_suggested = True
-            nearest_market = "City Cold Storage & Distribution Depot (5.4 km)"
             alert_msg = f"Critical temperature excursion: {temperature:.1f} C differs from target {eff_target:.1f} C."
         elif spoilage_risk >= 0.45 or quality_pct < 60.0 or abs_dev >= tolerance * 2.0:
             risk_level = "HIGH"
             env_condition = "BAD_EXCURSION"
-            route_rec = "HIGH RISK (LSTM): Cargo degradation accelerating. Divert to regional wholesale terminal."
+            route_rec = "High spoilage risk. Review cargo rescue with dispatch."
             reroute_suggested = True
-            nearest_market = "Apex Regional Cold Logistics Hub (14.2 km)"
             alert_msg = f"Temperature {temperature:.1f} C is outside the safe range around target {eff_target:.1f} C."
         elif spoilage_risk >= 0.25 or quality_pct < 80.0 or abs_dev > tolerance or door_open:
             risk_level = "MODERATE"
             env_condition = "MODERATE_DRIFT"
             route_rec = "MODERATE RISK (LSTM): Minor temperature drift. Verify refrigeration unit and prioritize route."
             reroute_suggested = False
-            nearest_market = "Sector 12 Cold Warehouse (22.0 km)"
             alert_msg = f"Minor temperature drift from target {eff_target:.1f} C. Monitor sensor telemetry."
         else:
             risk_level = "LOW"
             env_condition = "GOOD_OPTIMAL"
-            route_rec = "ROUTE OPTIMAL (LSTM): Cargo quality pristine. Target destination on schedule."
+            route_rec = "Current spoilage risk is low. Continue monitoring telemetry."
             reroute_suggested = False
-            nearest_market = None
             alert_msg = None
 
         # Also push state into insurance sequence buffer for this truck
@@ -178,7 +174,7 @@ class ColdChainLSTMEngine:
             "environment_condition": env_condition,
             "route_recommendation": route_rec,
             "reroute_suggested": reroute_suggested,
-            "nearest_safe_market": nearest_market,
+            "nearest_safe_market": None,
             "alert_message": alert_msg,
             "model_type": "PyTorch-SpoilageLSTM" if self.spoilage_loaded else "Kinetic-Fallback",
         }

@@ -20,7 +20,7 @@ flowchart LR
 | Folder | Stack | Port | Deployment | Purpose |
 | :--- | :--- | :--- | :--- | :--- |
 | `frontend/` | Next.js 14, Tailwind, Leaflet, Three.js | `:3000` | **Vercel / Netlify** | Enterprise landing page, 4,934-warehouse GIS map, 3D Sentinel X1 showcase, Admin, Company, and Driver portals |
-| `backend/` | NestJS 11, Socket.IO, `pg.Pool` | `:4000` | **Render** | Auth/RBAC, fleet & 3-role trip dispatch, 1-minute Neon DB LSTM logging |
+| `backend/` | NestJS 11, Socket.IO, `pg.Pool` | `:4000` | **Render** | Auth/RBAC, fleet and trip dispatch, telemetry, and [cargo rescue](./backend/README.md#cargo-rescue) |
 | `ai-ml/` | FastAPI, PyTorch, Pandas | `:8000` | **Render** | Synthetic data generator, `SpoilageLSTM` & `InsuranceLSTM`, route simulator |
 | `iot/` | Next.js 14 | `:3001` | **Vercel / Netlify** | Multi-device ESP32 sensor simulator with auto-stream & anomaly injection |
 

@@ -577,8 +577,13 @@ export default function TruckDetail() {
                 <div className="p-3 rounded-lg bg-blue-50/70 border border-blue-200">
                   <span className="text-xs font-semibold text-blue-800 block mb-1">Route & AI Advisory</span>
                   <p className="text-xs font-medium text-slate-700 line-clamp-2">
-                    {iotTelemetry.route_recommendation || 'Proceed on route. Cold chain fully preserved.'}
+                    {iotTelemetry.reroute_suggested
+                      ? 'Elevated spoilage risk. Review cargo rescue with dispatch.'
+                      : iotTelemetry.route_recommendation || 'No route advisory available.'}
                   </p>
+                  <a href="/owner/trips" className="text-xs font-medium text-blue-800 underline">
+                    Review cargo rescue in Trips
+                  </a>
                   <span className="text-[11px] text-slate-500 block mt-1">Speed: {iotTelemetry.gps?.speed_kmh ?? iotTelemetry.vehicle_speed ?? 0} km/h</span>
                 </div>
               </div>
@@ -663,7 +668,7 @@ export default function TruckDetail() {
                       <td className="font-mono tabular-nums font-semibold">
                         ₹{Number(row.predicted_insurance_price ?? truck?.current_insurance_price ?? 450).toFixed(2)}/mo
                       </td>
-                      <td className="text-gray-400 max-w-xs truncate">{row.route_recommendation || 'Route optimal'}</td>
+                      <td className="text-gray-400 max-w-xs truncate">{row.route_recommendation || 'No advisory recorded'}</td>
                     </tr>
                   ))}
                 </tbody>

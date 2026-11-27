@@ -13,6 +13,7 @@
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
     "test:neon": "ts-node src/test-neon.ts",
+    "test:rescue": "npm run build && node --test scripts/rescue-unit.test.cjs scripts/rescue-integration.test.cjs",
     "db:init": "ts-node src/db/db-init.ts",
     "db:migrate": "ts-node src/db/migrate.ts",
     "bootstrap:admin": "ts-node src/db/bootstrap-admin.ts"
@@ -40,6 +41,7 @@
     "socket.io": "^4.8.4"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.3.14",
     "@nestjs/cli": "^11.0.4",
     "@nestjs/schematics": "^11.0.1",
     "@types/bcryptjs": "^2.4.6",

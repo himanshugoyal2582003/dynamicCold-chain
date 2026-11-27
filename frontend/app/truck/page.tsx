@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useAuth, apiFetch } from '@/lib/auth';
 import { useRouter } from 'next/navigation';
 import DashboardLayout from '@/components/layout/DashboardLayout';
+import RescuePanel from '@/components/trips/RescuePanel';
 import {
   StatusBadge,
   Spinner,
@@ -18,6 +19,21 @@ import type { MapTruck } from '@/components/tracking/FleetMap';
 import { useShipmentRoute } from '@/lib/useShipmentRoute';
 import { io } from 'socket.io-client';
 const FleetMap = dynamic(() => import('@/components/tracking/FleetMap'), { ssr: false });
+
+function DriverRouteAdvisory({ telemetry, canReviewRescue }: {
+  telemetry: { reroute_suggested?: boolean; route_recommendation?: string | null };
+  canReviewRescue: boolean;
+}) {
+  if (telemetry.reroute_suggested) {
+    return <div className="rounded bg-amber-50 p-2.5 text-xs font-semibold text-amber-900">
+      Elevated spoilage risk
+      {canReviewRescue && <> · <a href="#cargo-rescue" className="underline">Review cargo rescue</a></>}
+    </div>;
+  }
+  return telemetry.route_recommendation
+    ? <div className="rounded bg-green-100 p-2.5 text-xs font-medium text-green-800">{telemetry.route_recommendation}</div>
+    : null;
+}
 
 const NAV = [
   { href: '/truck', label: 'My Truck', icon: '🚛' },
@@ -664,25 +680,7 @@ export default function TruckPanel() {
                         </div>
                       </div>
 
-                      {telemetryData.latest.route_recommendation && (
-                        <div
-                          className="text-xs p-2.5 rounded font-medium flex items-center justify-between gap-2"
-                          style={{
-                            background: telemetryData.latest.reroute_suggested ? '#FEE2E2' : '#DCFCE7',
-                            color: telemetryData.latest.reroute_suggested ? '#991B1B' : '#166534',
-                          }}
-                        >
-                          <span>{telemetryData.latest.route_recommendation}</span>
-                          {telemetryData.latest.reroute_suggested && (
-                            <button
-                              onClick={() => alert(`Rerouting accepted! Navigating to nearest safe cold hub: ${telemetryData.latest.nearest_safe_market || 'City Cold Depot'}`)}
-                              className="px-2.5 py-1 rounded bg-red-700 text-white font-bold hover:bg-red-800 shrink-0"
-                            >
-                              Navigate ↗
-                            </button>
-                          )}
-                        </div>
-                      )}
+                      <DriverRouteAdvisory telemetry={telemetryData.latest} canReviewRescue={activeTrip?.status === 'IN_PROGRESS'} />
                     </div>
                   </div>
                 ) : (
@@ -790,6 +788,7 @@ export default function TruckPanel() {
             </div>
 
             <div className="lg:col-span-5 space-y-5">
+              {activeTrip?.status === 'IN_PROGRESS' && <RescuePanel key={activeTrip.id} tripId={activeTrip.id} tripStatus={activeTrip.status} role="truckUser" />}
           {/* ── 2. ACTIVE TRIP / START TRIP ─────────────────────────────── */}
           {activeTrip ? (
             <div className="card" style={{ border: '1px solid var(--status-on-trip)', background: '#D8E5F210' }}>
@@ -1038,22 +1037,7 @@ export default function TruckPanel() {
                       <strong className="text-sm text-emerald-700">15 min</strong>
                     </div>
                   </div>
-                  {telemetryData.latest.route_recommendation && (
-                    <div className="text-xs p-2.5 rounded font-medium flex items-center justify-between gap-2 mt-2" style={{
-                      background: telemetryData.latest.reroute_suggested ? '#FEE2E2' : '#DCFCE7',
-                      color: telemetryData.latest.reroute_suggested ? '#991B1B' : '#166534',
-                    }}>
-                      <span>{telemetryData.latest.route_recommendation}</span>
-                      {telemetryData.latest.reroute_suggested && (
-                        <button
-                          onClick={() => alert(`Rerouting accepted! Navigating to nearest safe cold hub: ${telemetryData.latest.nearest_safe_market || 'City Cold Depot'}`)}
-                          className="px-2.5 py-1 rounded bg-red-700 text-white font-bold hover:bg-red-800 shrink-0"
-                        >
-                          Navigate ↗
-                        </button>
-                      )}
-                    </div>
-                  )}
+                  <DriverRouteAdvisory telemetry={telemetryData.latest} canReviewRescue={activeTrip?.status === 'IN_PROGRESS'} />
                 </div>
               </div>
             ) : !telemetryLoading ? (

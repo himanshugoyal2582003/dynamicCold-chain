@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { io } from 'socket.io-client';
 import { apiFetch, useAuth } from '@/lib/auth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
+import RescuePanel from './RescuePanel';
 import { EmptyState, ErrorAlert, Modal, Spinner, StatusBadge, SuccessAlert, formatDateTime } from '@/components/ui/shared';
 
 type Role = 'admin' | 'owner';
@@ -237,6 +238,7 @@ export default function TripManagement({ role }: { role: Role }) {
           <div className="flex justify-between"><span className="text-slate-500">Started</span><span>{formatDateTime(selectedTrip.started_at)}</span></div>
           <div className="flex justify-between"><span className="text-slate-500">Completed</span><span>{formatDateTime(selectedTrip.ended_at)}</span></div>
           {selectedTrip.notes && <div><span className="text-slate-500">Notes</span><p className="whitespace-pre-wrap">{selectedTrip.notes}</p></div>}
+          <RescuePanel key={selectedTrip.id} tripId={selectedTrip.id} tripStatus={trips.find(trip => trip.id === selectedTrip.id)?.status ?? selectedTrip.status} role={role} />
         </div>
       </Modal>}
     </DashboardLayout>

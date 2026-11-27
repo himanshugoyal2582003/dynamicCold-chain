@@ -5,6 +5,7 @@ import { useAuth, apiFetch } from '@/lib/auth';
 import { useRouter } from 'next/navigation';
 import { io } from 'socket.io-client';
 import DashboardLayout from '@/components/layout/DashboardLayout';
+import RescuePanel from '@/components/trips/RescuePanel';
 import { Spinner, EmptyState, ErrorAlert, formatDateTime, StatusBadge } from '@/components/ui/shared';
 
 const NAV = [
@@ -21,6 +22,7 @@ export default function TripHistory() {
   const [fetching, setFetching] = useState(true);
   const [error, setError] = useState('');
   const [filter, setFilter] = useState('ALL');
+  const [rescueTripId, setRescueTripId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!loading && (!user || user.role !== 'truckUser')) router.replace('/login');
@@ -86,6 +88,8 @@ export default function TripHistory() {
                   <span>Completed: {formatDateTime(trip.ended_at)}</span>
                 </div>
                 {trip.notes && <p className="text-xs mt-3 p-2 rounded bg-neutral-50 text-slate-600">{trip.notes}</p>}
+                <button type="button" className="btn-ghost mt-2 text-xs" aria-expanded={rescueTripId === trip.id} onClick={() => setRescueTripId(rescueTripId === trip.id ? null : trip.id)}>Cargo rescue history</button>
+                {rescueTripId === trip.id && <RescuePanel tripId={trip.id} tripStatus={trip.status} role="truckUser" />}
               </article>
             ))}
           </div>
