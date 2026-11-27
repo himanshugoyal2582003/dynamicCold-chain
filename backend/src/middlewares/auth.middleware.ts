@@ -3,6 +3,7 @@ import {
   NestMiddleware,
   UnauthorizedException,
   ForbiddenException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
 import { AuthService } from '../auth/auth.service';
@@ -43,37 +44,41 @@ export class AuthGuardMiddleware implements NestMiddleware {
 
   async use(req: Request, _res: Response, next: NextFunction) {
     const token = extractJwtToken(req);
-    if (!token) throw new UnauthorizedException('Authentication required. Missing token in cookie or Authorization header.');
+    if (!token) throw new UnauthorizedException('Authentication required. Missing coldchain_token cookie.');
 
+    let payload: any;
     try {
-      const payload = this.authService.verifyToken(token);
-      req.user = payload;
-
-      // For truckUser: always refresh truckId from DB so that
-      // truck assignments made after login take effect immediately
-      // without requiring the driver to re-login.
-      if (payload.role === 'truckUser') {
-        try {
-          const sql = this.neonService.getSql();
-          if (sql) {
-            const rows = await sql(
-              `SELECT truck_id, owner_id FROM users WHERE id = $1 AND active = true LIMIT 1`,
-              [payload.sub],
-            );
-            if (rows && rows.length > 0) {
-              req.user.truckId = rows[0].truck_id || null;
-              req.user.ownerId = rows[0].owner_id || null;
-            }
-          }
-        } catch {
-          // If DB lookup fails, fall through with JWT value
-        }
-      }
-
-      next();
+      payload = this.authService.verifyToken(token);
     } catch {
       throw new UnauthorizedException('Invalid or expired session.');
     }
+    req.user = payload;
+
+    // For truckUser: always refresh truckId from DB so that
+    // truck assignments made after login take effect immediately
+    // without requiring the driver to re-login, and fail closed if inactive/unavailable.
+    if (payload.role === 'truckUser') {
+      const sql = this.neonService.getSql();
+      if (!sql) {
+        throw new ServiceUnavailableException('Unable to verify driver session.');
+      }
+      let rows: any[];
+      try {
+        rows = await sql(
+          `SELECT truck_id, owner_id FROM users WHERE id = $1 AND active = true LIMIT 1`,
+          [payload.sub],
+        );
+      } catch {
+        throw new ServiceUnavailableException('Unable to verify driver session.');
+      }
+      if (!rows || rows.length === 0) {
+        throw new UnauthorizedException('Account is inactive or unavailable.');
+      }
+      req.user.truckId = rows[0].truck_id || null;
+      req.user.ownerId = rows[0].owner_id || null;
+    }
+
+    next();
   }
 }
 

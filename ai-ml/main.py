@@ -29,12 +29,16 @@ app = FastAPI(
     version="1.0.0",
 )
 
-SERVICE_TOKEN = os.getenv("AIML_SERVICE_TOKEN", "")
-BACKEND_INGEST_SECRET = os.getenv("IOT_INGEST_SECRET", "")
+SERVICE_TOKEN = os.getenv("AIML_SERVICE_TOKEN", "").strip()
+BACKEND_INGEST_SECRET = os.getenv("IOT_INGEST_SECRET", "").strip()
+IS_PRODUCTION = os.getenv("NODE_ENV", "").lower() == "production" or os.getenv("ENV", "").lower() == "production"
+
+if IS_PRODUCTION and not SERVICE_TOKEN:
+    raise RuntimeError("AIML_SERVICE_TOKEN must be configured in production.")
 
 def has_valid_service_token(token: str | None) -> bool:
     if not SERVICE_TOKEN:
-        return True
+        return not IS_PRODUCTION
     return bool(token) and secrets.compare_digest(token, SERVICE_TOKEN)
 
 @app.middleware("http")

@@ -11,7 +11,24 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Request } from 'express';
+import { timingSafeEqual } from 'crypto';
 import { IotService, EnrichedIoTTelemetry } from './iot.service';
+
+function verifyIngestSecret(ingestSecret?: string): void {
+  const expectedSecret = process.env.IOT_INGEST_SECRET?.trim();
+  if (!expectedSecret) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new UnauthorizedException('IOT_INGEST_SECRET is not configured.');
+    }
+    return;
+  }
+  const provided = (ingestSecret || '').trim();
+  const a = Buffer.from(provided, 'utf8');
+  const b = Buffer.from(expectedSecret, 'utf8');
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    throw new UnauthorizedException('Invalid IoT service credentials.');
+  }
+}
 
 @Controller('api/iot')
 export class IotController {
@@ -24,10 +41,7 @@ export class IotController {
     @Body() body: { devices: Array<{ id: string; connectionNumber: string; name: string; productType?: string; battery?: number; powerOn?: boolean; status?: string }>; removedDeviceIds?: string[] },
     @Headers('x-iot-ingest-secret') ingestSecret?: string,
   ) {
-    const expectedSecret = process.env.IOT_INGEST_SECRET;
-    if (expectedSecret && ingestSecret !== expectedSecret) {
-      throw new UnauthorizedException('Invalid IoT simulator credentials.');
-    }
+    verifyIngestSecret(ingestSecret);
     return this.iotService.syncDeviceRegistry(body?.devices, body?.removedDeviceIds || []);
   }
 
@@ -37,10 +51,7 @@ export class IotController {
     @Body() body: EnrichedIoTTelemetry,
     @Headers('x-iot-ingest-secret') ingestSecret?: string,
   ) {
-    const expectedSecret = process.env.IOT_INGEST_SECRET;
-    if (expectedSecret && ingestSecret !== expectedSecret) {
-      throw new UnauthorizedException('Invalid telemetry service credentials.');
-    }
+    verifyIngestSecret(ingestSecret);
     if (!body || !body.connection_number) {
       throw new BadRequestException('Invalid telemetry payload: connection_number required');
     }
