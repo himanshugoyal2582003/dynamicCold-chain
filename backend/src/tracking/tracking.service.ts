@@ -63,6 +63,7 @@ export class TrackingService implements OnModuleInit {
   }
 
   private async ensureTrackingTables() {
+    if (process.env.NODE_ENV === 'production') return;
     const sql = this.neonService.getSql();
     if (!sql) return;
     try {

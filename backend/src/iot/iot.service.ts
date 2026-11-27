@@ -67,6 +67,7 @@ export class IotService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async ensureIotColumn() {
+    if (process.env.NODE_ENV === 'production') return;
     const sql = this.neonService.getSql();
     if (!sql) return;
     try {
