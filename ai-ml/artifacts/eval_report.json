@@ -1,0 +1,50 @@
+{
+  "dataset_type": "synthetic_benchmark",
+  "note": "Evaluated on held-out 15% synthetic sequences; real-world refrigerated cargo validation requires empirical trip logs.",
+  "splits": {
+    "train": 0.7,
+    "validation": 0.15,
+    "test": 0.15
+  },
+  "spoilage_lstm": {
+    "val_risk_mae": 0.0333,
+    "test_risk_mae": 0.0347,
+    "test_risk_rmse": 0.0639,
+    "test_rsl_ratio_mae": 0.0103,
+    "test_rsl_ratio_rmse": 0.0154,
+    "test_high_risk_roc_auc": 1.0,
+    "baseline_mean_risk_mae": 0.4326,
+    "baseline_mean_risk_rmse": 0.4406,
+    "per_product": {
+      "Pharmaceuticals (mRNA Vaccines)": {
+        "samples": 9,
+        "risk_mae": 0.1256,
+        "rsl_ratio_mae": 0.021
+      },
+      "Ice Cream & Frozen Desserts": {
+        "samples": 8,
+        "risk_mae": 0.1607,
+        "rsl_ratio_mae": 0.0194
+      },
+      "Fresh Produce (Exotic Berries)": {
+        "samples": 1,
+        "risk_mae": 0.0382,
+        "rsl_ratio_mae": 0.0203
+      },
+      "Frozen Seafood (Tuna & Salmon)": {
+        "samples": 21,
+        "risk_mae": 0.039,
+        "rsl_ratio_mae": 0.02
+      }
+    }
+  },
+  "insurance_lstm": {
+    "val_risk_norm_mae": 0.0109,
+    "test_risk_score_mae": 0.82,
+    "test_risk_score_rmse": 1.54,
+    "test_multiplier_mae": 0.0119,
+    "test_multiplier_rmse": 0.024,
+    "baseline_mean_score_mae": 31.87,
+    "baseline_mean_score_rmse": 36.26
+  }
+}
