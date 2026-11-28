@@ -22,6 +22,8 @@ import { RescueModule } from './rescue/rescue.module';
 import { RescueController } from './rescue/rescue.controller';
 import { MaintenanceModule } from './maintenance/maintenance.module';
 import { MaintenanceController } from './maintenance/maintenance.controller';
+import { DigitalTwinModule } from './digital-twin/digital-twin.module';
+import { DigitalTwinController } from './digital-twin/digital-twin.controller';
 
 @Module({
   imports: [
@@ -43,6 +45,7 @@ import { MaintenanceController } from './maintenance/maintenance.controller';
     TripsModule,
     RescueModule,
     MaintenanceModule,
+    DigitalTwinModule,
   ],
 })
 export class AppModule implements NestModule {
@@ -66,6 +69,7 @@ export class AppModule implements NestModule {
         DriverTripsController,
         RescueController,
         MaintenanceController,
+        DigitalTwinController,
         NeonController,
         { path: 'api/auth/me', method: RequestMethod.GET },
         { path: 'api/auth/logout', method: RequestMethod.POST },

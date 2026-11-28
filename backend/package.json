@@ -16,6 +16,7 @@
     "test:rescue": "npm run build && node --test scripts/rescue-unit.test.cjs scripts/rescue-integration.test.cjs",
     "test:maintenance": "npm run build && node --test scripts/maintenance-unit.test.cjs scripts/maintenance-integration.test.cjs",
     "evaluate:maintenance": "node scripts/evaluate-maintenance.cjs",
+    "test:digital-twin": "npm run build && node --test scripts/digital-twin-unit.test.cjs scripts/digital-twin-integration.test.cjs",
     "db:init": "ts-node src/db/db-init.ts",
     "db:migrate": "ts-node src/db/migrate.ts",
     "bootstrap:admin": "ts-node src/db/bootstrap-admin.ts"

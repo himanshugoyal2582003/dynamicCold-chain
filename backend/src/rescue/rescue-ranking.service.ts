@@ -2,6 +2,8 @@
 import { WarehouseService, NearbyWarehouse } from './warehouse.service';
 import { RoutingService, RoadRoute } from './routing.service';
 
+export const RESCUE_SAFETY_BUFFER_MINUTES = 15;
+
 export interface RescueInput {
     latitude: number;
     longitude: number;
@@ -47,7 +49,7 @@ export class RescueRankingService {
             throw new Error('Invalid remaining shelf life');
         }
 
-        const safetyBuffer = input.safetyBufferMinutes ?? 15;
+        const safetyBuffer = input.safetyBufferMinutes ?? RESCUE_SAFETY_BUFFER_MINUTES;
         const radius = input.searchRadiusKm ?? 200;
         const limit = input.candidateLimit ?? 5;
 

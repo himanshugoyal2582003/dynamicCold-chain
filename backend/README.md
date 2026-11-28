@@ -14,6 +14,10 @@ npm run db:init        # Initialize tables & demo seed data (optional)
 npm run start:dev      # Starts on http://localhost:4000
 ```
 
+## Digital Twin and what-if simulation
+
+See the [Digital Twin technical guide](./DIGITAL_TWIN.md) for the thermal model, scenario inputs, APIs, and isolated tests.
+
 ## Predictive maintenance
 
 The [Predictive Maintenance Engine](./PREDICTIVE_MAINTENANCE.md) scores thermal and sensor behavior from approved devices and exposes tenant-scoped fleet history. The technical guide documents the migration, sensor provenance, model, and isolated evaluation.
