@@ -14,6 +14,10 @@ npm run db:init        # Initialize tables & demo seed data (optional)
 npm run start:dev      # Starts on http://localhost:4000
 ```
 
+## Predictive maintenance
+
+The [Predictive Maintenance Engine](./PREDICTIVE_MAINTENANCE.md) scores thermal and sensor behavior from approved devices and exposes tenant-scoped fleet history. The technical guide documents the migration, sensor provenance, model, and isolated evaluation.
+
 ## Cargo rescue
 
 The driver opens **Cargo rescue** on an in-progress trip. An owner or admin can open the same panel in **Trips**. Selecting **Evaluate emergency routes** checks the latest paired sensor reading, LSTM prediction, and GPS fix. At a spoilage risk of 45% or higher, the engine compares up to five listed facilities within 200 km by straight-line distance and records their OSRM road estimates when available.

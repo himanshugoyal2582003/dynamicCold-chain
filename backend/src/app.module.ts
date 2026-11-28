@@ -20,6 +20,8 @@ import { AuthGuardMiddleware } from './middlewares/auth.middleware';
 import { CsrfMiddleware } from './middlewares/csrf.middleware';
 import { RescueModule } from './rescue/rescue.module';
 import { RescueController } from './rescue/rescue.controller';
+import { MaintenanceModule } from './maintenance/maintenance.module';
+import { MaintenanceController } from './maintenance/maintenance.controller';
 
 @Module({
   imports: [
@@ -40,6 +42,7 @@ import { RescueController } from './rescue/rescue.controller';
     TrackingModule,
     TripsModule,
     RescueModule,
+    MaintenanceModule,
   ],
 })
 export class AppModule implements NestModule {
@@ -62,6 +65,7 @@ export class AppModule implements NestModule {
         TripsController,
         DriverTripsController,
         RescueController,
+        MaintenanceController,
         NeonController,
         { path: 'api/auth/me', method: RequestMethod.GET },
         { path: 'api/auth/logout', method: RequestMethod.POST },

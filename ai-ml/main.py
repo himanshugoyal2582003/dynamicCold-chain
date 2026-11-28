@@ -279,10 +279,20 @@ def process_iot_telemetry(req: RawIoTTelemetry):
 
     # Forward to Main Backend (NestJS)
     backend_url = os.getenv("BACKEND_API_URL", "http://localhost:4000").rstrip("/")
+    forwarded = processed.model_dump()
+    # Unauthenticated development calls may still use the legacy LSTM pipeline.
+    # Only an authenticated producer can add observations to maintenance history.
+    if SERVICE_TOKEN and BACKEND_INGEST_SECRET and req.timestamp:
+        forwarded["maintenance_sensor"] = {
+            "observed_at": req.timestamp,
+            "temperature_c": req.temperature,
+            "humidity_pct": req.humidity,
+            "door_open": req.door_open if "door_open" in req.model_fields_set else None,
+        }
     try:
         requests.post(
             f"{backend_url}/api/iot/ingest",
-            json=processed.model_dump(),
+            json=forwarded,
             headers={"x-iot-ingest-secret": BACKEND_INGEST_SECRET},
             timeout=5.0,
         )

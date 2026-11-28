@@ -15,6 +15,7 @@ import {
   Shield,
   Truck,
   User,
+  Wrench,
 } from 'lucide-react';
 
 interface NavItem {
@@ -34,6 +35,7 @@ function renderNavIcon(item: NavItem, className: string) {
   if (path.endsWith('/users') || path.endsWith('/drivers')) return <User className={className} strokeWidth={1.8} />;
   if (path.endsWith('/activity')) return <ClipboardList className={className} strokeWidth={1.8} />;
   if (path.endsWith('/history')) return <History className={className} strokeWidth={1.8} />;
+  if (path.endsWith('/maintenance')) return <Wrench className={className} strokeWidth={1.8} />;
   if (path.endsWith('/issues')) return <AlertTriangle className={className} strokeWidth={1.8} />;
   if (path === '/admin') return <LayoutDashboard className={className} strokeWidth={1.8} />;
   return <Truck className={className} strokeWidth={1.8} />;
@@ -46,11 +48,15 @@ interface DashboardLayoutProps {
   roleLabel: string;
 }
 
-export default function DashboardLayout({ children, navItems, title, roleLabel }: DashboardLayoutProps) {
+export default function DashboardLayout({ children, navItems: baseNavItems, title, roleLabel }: DashboardLayoutProps) {
   const { user, logout } = useAuth();
   const pathname = usePathname();
+  const navItems = user && (user.role === 'admin' || user.role === 'owner')
+    ? [...baseNavItems, { href: `/${user.role}/maintenance`, label: 'Maintenance', icon: '' }]
+    : baseNavItems;
   const isActive = (href: string) => {
     const [itemPath, itemQuery] = href.split('?');
+    if (pathname === '/admin/maintenance' || pathname === '/owner/maintenance') return itemPath === pathname;
     const searchParams = new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search);
     if (pathname === itemPath && itemQuery) {
       return new URLSearchParams(itemQuery).toString() === searchParams.toString();
@@ -96,6 +102,7 @@ export default function DashboardLayout({ children, navItems, title, roleLabel }
                   }
                 : undefined}
               className={`sidebar-link ${isActive(item.href) ? 'active' : ''}`}
+              aria-current={item.href.endsWith('/maintenance') && isActive(item.href) ? 'page' : undefined}
             >
               {renderNavIcon(item, 'w-4 h-4 shrink-0')}
               <span>{item.label}</span>
@@ -153,6 +160,7 @@ export default function DashboardLayout({ children, navItems, title, roleLabel }
                 : undefined}
               className="flex min-w-[76px] flex-1 flex-col items-center py-2 text-[11px] leading-tight gap-1"
               style={{ color: isActive(item.href) ? 'var(--color-gold)' : 'var(--color-slate)' }}
+              aria-current={item.href.endsWith('/maintenance') && isActive(item.href) ? 'page' : undefined}
             >
               {renderNavIcon(item, 'w-5 h-5 shrink-0')}
               <span>{item.label}</span>

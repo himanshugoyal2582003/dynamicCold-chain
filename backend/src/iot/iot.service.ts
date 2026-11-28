@@ -1,7 +1,9 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, OnModuleDestroy, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
 import { NeonService } from '../neon/neon.service';
+import { MaintenanceService, ReportedSensor } from '../maintenance/maintenance.service';
 
 export interface EnrichedIoTTelemetry {
+  maintenance_sensor?: ReportedSensor;
   device_id: string;
   connection_number: string;
   source?: 'sensor' | 'fallback';
@@ -56,7 +58,7 @@ export class IotService implements OnModuleInit, OnModuleDestroy {
   private readonly SNAPSHOT_INTERVAL_MS = 60 * 1000;
   private tripTelemetryTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private readonly neonService: NeonService) {}
+  constructor(private readonly neonService: NeonService, private readonly maintenance: MaintenanceService) {}
 
   async onModuleInit() {
     await this.ensureIotColumn();
@@ -274,6 +276,8 @@ export class IotService implements OnModuleInit, OnModuleDestroy {
   // Ingest telemetry processed by AI/ML
   async ingest(payload: EnrichedIoTTelemetry, source: 'sensor' | 'fallback' = 'sensor') {
     if (!payload.connection_number) return { success: false, error: 'connection_number missing' };
+    const maintenanceSensor = payload.maintenance_sensor;
+    delete payload.maintenance_sensor;
 
     const conn = payload.connection_number.trim().toUpperCase();
     payload.connection_number = conn;
@@ -365,6 +369,7 @@ export class IotService implements OnModuleInit, OnModuleDestroy {
       if (source === 'sensor') {
         this.truckToConnection.set(boundTruckId, conn);
         this.connectionToTruck.set(conn, boundTruckId);
+        void this.maintenance.recordSensor(boundTruckId, payload.device_id, conn, maintenanceSensor);
       }
 
     // Persist only real reported coordinates and speed. Missing telemetry stays
