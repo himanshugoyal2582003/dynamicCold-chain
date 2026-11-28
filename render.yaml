@@ -4,7 +4,7 @@ services:
     runtime: node
     plan: starter
     rootDir: backend
-    buildCommand: npm ci && npm run build
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm run start:prod
     healthCheckPath: /api/neon/health
     envVars:
@@ -21,10 +21,7 @@ services:
       - key: AIML_SERVICE_TOKEN
         sync: false
       - key: AI_ML_API_URL
-        fromService:
-          type: web
-          name: coldchain-aiml
-          property: host
+        sync: false
       - key: CORS_ORIGIN
         sync: false
 
@@ -40,10 +37,7 @@ services:
       - key: PYTHON_VERSION
         value: "3.10.13"
       - key: BACKEND_API_URL
-        fromService:
-          type: web
-          name: coldchain-backend
-          property: host
+        sync: false
       - key: AIML_SERVICE_TOKEN
         sync: false
       - key: IOT_INGEST_SECRET

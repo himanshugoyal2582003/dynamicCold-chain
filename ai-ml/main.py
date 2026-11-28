@@ -147,7 +147,7 @@ async def deliver_telemetry():
             dispatched = False
         try:
             await asyncio.wait_for(outbox_stop.wait(), 0.05 if dispatched else 1)
-        except TimeoutError:
+        except asyncio.TimeoutError:
             pass
 
 

@@ -555,7 +555,7 @@ export class IotService implements OnModuleInit, OnModuleDestroy {
     let aiResponse: any = null;
     try {
       const baseUrl = process.env.AI_ML_API_URL || 'http://localhost:8000';
-      const aiServiceToken = process.env.AI_ML_SERVICE_TOKEN || '';
+      const aiServiceToken = process.env.AIML_SERVICE_TOKEN || process.env.AI_ML_SERVICE_TOKEN || '';
       const res = await fetch(`${baseUrl}/api/predict/insurance`, {
         method: 'POST',
         headers: {

@@ -1,6 +1,6 @@
 # ColdChain Production Deployment Guide
 
-This repository deploys cleanly across **Render** (for the two backend services) and **Vercel** or **Netlify** (for the two Next.js frontends).
+The deployment layout uses **Render** for the two backend services and **Vercel** or **Netlify** for the two Next.js frontends.
 
 | Service | Directory | Platform | Default Local Port |
 | :--- | :--- | :--- | :--- |
@@ -26,7 +26,7 @@ A root Blueprint is provided in [`render.yaml`](./render.yaml) defining both `co
 - **`coldchain-backend`**
   - **Root Directory**: `backend`
   - **Runtime**: Node
-  - **Build Command**: `npm ci && npm run build`
+  - **Build Command**: `npm ci --include=dev && npm run build`
   - **Start Command**: `npm run start:prod`
   - **Health Check Path**: `/api/neon/health`
 - **`coldchain-aiml`**
@@ -57,7 +57,7 @@ A root Blueprint is provided in [`render.yaml`](./render.yaml) defining both `co
 | `AIML_SERVICE_TOKEN` | Must match `coldchain-backend` and `iot` |
 | `IOT_INGEST_SECRET` | Must match `coldchain-backend` and `iot` |
 
-> **Note:** Render's `fromService` `host` property injects `hostname` without `https://`. If you use Blueprints, verify `AI_ML_API_URL` and `BACKEND_API_URL` include `https://` in the Render Environment tab.
+Set `AI_ML_API_URL` and `BACKEND_API_URL` to absolute URLs with a scheme in the Render Environment tab. The Blueprint prompts for both values on first deployment. Confirm existing services also have the full URLs before redeploying.
 
 ---
 
@@ -107,15 +107,11 @@ Create **two separate Netlify sites** from the same GitHub repository (configs a
 
 ---
 
-## 4. Post-Deploy Checklist
+## 4. Database Rollout and Post-Deploy Checks
 
-1. **Initialize Neon DB (first-time only)**:
-   ```powershell
-   cd backend
-   npm run db:init
-   ```
-   Startup migrations in `IotService` and `TrackingService` also auto-create `iot_devices`, `truck_locations`, `truck_location_history`, and `trip_telemetry_history`.
+1. Before deploying, coordinate a snapshot and a low-write migration window with the database owner. Verify the target and its `schema_migrations` ledger, then use one migration runner with `DATABASE_URL` set to the approved direct connection and run `npm run db:migrate` from `backend/`. Confirm the ledger records migrations through `010_insurance_signal_reviews.sql` before starting the new backend. Rehearse this on a production-like database copy and allow for the `trips` index lock in migration 010.
 2. **Verify Backends**:
    - `GET https://coldchain-backend.onrender.com/api/neon/health` → `{"status":"connected",...}`
    - `GET https://coldchain-aiml.onrender.com/health` → `{"status":"ok",...}`
 3. **Update `CORS_ORIGIN`** on `coldchain-backend` with your final Vercel & Netlify URLs so browser cookies and Socket.IO WebSockets connect cleanly.
+4. Follow the [durable telemetry rollout](./backend/PLATFORM_ADVANCEMENT.md#durable-telemetry-delivery). Coordinate the producer and monitor credentials, persistent SQLite volume, single active projection writer, and producer cutover before setting `TELEMETRY_REQUIRE_DURABLE=true`.
