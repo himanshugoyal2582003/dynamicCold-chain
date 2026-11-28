@@ -39,6 +39,7 @@ async function streamSingleDevice(device: IoTDevice) {
   // 3. Send raw data to AI/ML prediction engine
   let enrichedResult: any = null;
   let pipelineSuccess = false;
+  let deliveryStatus = 'local_fallback';
 
   try {
     const aiRes = await fetch(AIML_API_URL, {
@@ -48,11 +49,14 @@ async function streamSingleDevice(device: IoTDevice) {
         ...(AIML_SERVICE_TOKEN ? { 'x-service-token': AIML_SERVICE_TOKEN } : {}),
       },
       body: JSON.stringify(rawPayload),
+      redirect: 'error',
+      signal: AbortSignal.timeout(8000),
     });
 
     if (aiRes.ok) {
       enrichedResult = await aiRes.json();
       pipelineSuccess = true;
+      deliveryStatus = aiRes.headers.get('X-Telemetry-Delivery') === 'queued' ? 'accepted_by_outbox' : 'unconfirmed';
     }
   } catch (err: any) {
     console.warn(`[IoT -> AI/ML Pipeline] AI Service unreachable: ${err.message}`);
@@ -91,6 +95,7 @@ async function streamSingleDevice(device: IoTDevice) {
     rawPayload,
     enrichedResult,
     pipelineSuccess,
+    deliveryStatus,
   };
 }
 

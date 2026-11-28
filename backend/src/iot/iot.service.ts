@@ -274,7 +274,7 @@ export class IotService implements OnModuleInit, OnModuleDestroy {
   }
 
   // Ingest telemetry processed by AI/ML
-  async ingest(payload: EnrichedIoTTelemetry, source: 'sensor' | 'fallback' = 'sensor') {
+  async ingest(payload: EnrichedIoTTelemetry, source: 'sensor' | 'fallback' = 'sensor', durable = false) {
     if (!payload.connection_number) return { success: false, error: 'connection_number missing' };
     const maintenanceSensor = payload.maintenance_sensor;
     delete payload.maintenance_sensor;
@@ -323,7 +323,10 @@ export class IotService implements OnModuleInit, OnModuleDestroy {
     }
     if (
       existingForTruck && Number.isFinite(incomingTimestamp) &&
-      incomingTimestamp < Date.parse(existingForTruck.timestamp)
+      (incomingTimestamp < Date.parse(existingForTruck.timestamp) ||
+        (durable && incomingTimestamp === Date.parse(existingForTruck.timestamp) &&
+          source === 'sensor' && existingForTruck.source === 'sensor' && existingForTruck.connection_number === conn &&
+          existingForTruck.device_id === payload.device_id))
     ) {
       return { success: true, ignored: true, reason: 'Out-of-order telemetry', truck_id: boundTruckId };
     }

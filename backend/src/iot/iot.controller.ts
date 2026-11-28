@@ -7,6 +7,7 @@ import {
   Req,
   Headers,
   BadRequestException,
+  ConflictException,
   UnauthorizedException,
   ForbiddenException,
 } from '@nestjs/common';
@@ -14,7 +15,7 @@ import { Request } from 'express';
 import { timingSafeEqual } from 'crypto';
 import { IotService, EnrichedIoTTelemetry } from './iot.service';
 
-function verifyIngestSecret(ingestSecret?: string): void {
+export function verifyIngestSecret(ingestSecret?: string): void {
   const expectedSecret = process.env.IOT_INGEST_SECRET?.trim();
   if (!expectedSecret) {
     if (process.env.NODE_ENV === 'production') {
@@ -52,6 +53,9 @@ export class IotController {
     @Headers('x-iot-ingest-secret') ingestSecret?: string,
   ) {
     verifyIngestSecret(ingestSecret);
+    if (process.env.TELEMETRY_REQUIRE_DURABLE === 'true') {
+      throw new ConflictException('This deployment accepts telemetry through durable delivery only');
+    }
     if (!body || !body.connection_number) {
       throw new BadRequestException('Invalid telemetry payload: connection_number required');
     }

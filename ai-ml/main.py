@@ -2,10 +2,12 @@ import asyncio
 import logging
 import os
 import secrets
+import re
+from threading import Lock
 import requests
 from datetime import datetime, timezone
 from typing import Dict, List, Set, Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from models import (
     ShipmentTelemetry,
@@ -19,6 +21,7 @@ from models import (
 )
 from simulator import fleet_manager, resolve_product_profile
 from lstm_engine import lstm_engine
+from telemetry_outbox import TelemetryOutbox, QueueFull
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("coldchain-aiml")
@@ -31,10 +34,20 @@ app = FastAPI(
 
 SERVICE_TOKEN = os.getenv("AIML_SERVICE_TOKEN", "").strip()
 BACKEND_INGEST_SECRET = os.getenv("IOT_INGEST_SECRET", "").strip()
+TELEMETRY_MONITOR_TOKEN = os.getenv("TELEMETRY_MONITOR_TOKEN", "").strip()
+OUTBOX_PATH = os.getenv("TELEMETRY_OUTBOX_PATH", "").strip()
+outbox = None
+outbox_lock = Lock()
+outbox_task = None
+outbox_stop = None
 IS_PRODUCTION = os.getenv("NODE_ENV", "").lower() == "production" or os.getenv("ENV", "").lower() == "production"
 
 if IS_PRODUCTION and not SERVICE_TOKEN:
     raise RuntimeError("AIML_SERVICE_TOKEN must be configured in production.")
+if OUTBOX_PATH:
+    if not SERVICE_TOKEN or not BACKEND_INGEST_SECRET or not TELEMETRY_MONITOR_TOKEN or TELEMETRY_MONITOR_TOKEN == SERVICE_TOKEN:
+        raise RuntimeError("Durable telemetry requires ingest and separate producer and monitor tokens.")
+    outbox = TelemetryOutbox(OUTBOX_PATH)
 
 def has_valid_service_token(token: str | None) -> bool:
     if not SERVICE_TOKEN:
@@ -46,6 +59,13 @@ async def require_service_auth(request, call_next):
     # Health checks disclose no fleet data and must remain probeable.
     if request.url.path == "/health":
         return await call_next(request)
+    if request.url.path.startswith("/internal/telemetry-outbox"):
+        if TELEMETRY_MONITOR_TOKEN and secrets.compare_digest(
+            request.headers.get("x-service-token", "").encode(), TELEMETRY_MONITOR_TOKEN.encode()
+        ):
+            return await call_next(request)
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=401, content={"detail": "Monitor authentication required"})
     if not has_valid_service_token(request.headers.get("x-service-token")):
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=401, content={"detail": "Service authentication required"})
@@ -108,7 +128,52 @@ async def background_telemetry_loop():
 
 @app.on_event("startup")
 async def startup_event():
+    global outbox_task, outbox_stop
     asyncio.create_task(background_telemetry_loop())
+    if outbox is not None:
+        outbox_stop = asyncio.Event()
+        outbox_task = asyncio.create_task(deliver_telemetry())
+
+
+async def deliver_telemetry():
+    backend = os.getenv("BACKEND_API_URL", "http://localhost:4000").rstrip("/")
+    while not outbox_stop.is_set():
+        try:
+            dispatched = await asyncio.to_thread(
+                outbox.dispatch_one, backend + "/api/iot/delivery/accept", BACKEND_INGEST_SECRET
+            )
+        except Exception:
+            logger.warning("Telemetry delivery worker could not process the queue")
+            dispatched = False
+        try:
+            await asyncio.wait_for(outbox_stop.wait(), 0.05 if dispatched else 1)
+        except TimeoutError:
+            pass
+
+
+@app.on_event("shutdown")
+async def stop_delivery():
+    if outbox_task is not None:
+        outbox_stop.set()
+        await outbox_task
+        outbox.close()
+
+
+@app.get("/internal/telemetry-outbox")
+def outbox_status():
+    return outbox.metrics() if outbox is not None else {"enabled": False}
+
+
+@app.post("/internal/telemetry-outbox/{identifier}/replay")
+def outbox_replay(identifier: str, body: dict):
+    actor = body.get("actor")
+    if not re.fullmatch(r"[0-9a-f]{64}", identifier) or not isinstance(actor, str) or not re.fullmatch(r"[a-f0-9-]{36}", actor):
+        raise HTTPException(400, "Invalid replay inputs")
+    if outbox is None:
+        raise HTTPException(503, "Durable telemetry is disabled")
+    if not outbox.replay(identifier, actor):
+        raise HTTPException(409, "Event is not a dead letter")
+    return {"queued": True}
 
 @app.get("/health")
 def health_check():
@@ -226,7 +291,34 @@ def predict_shelf_life(req: ShelfLifePredictionRequest):
 # 3. Forwards enriched telemetry to Main Backend (NestJS)
 # 4. Returns processed payload with route recommendations
 @app.post("/api/iot/process", response_model=ProcessedIoTTelemetry)
-def process_iot_telemetry(req: RawIoTTelemetry):
+def process_iot_telemetry(req: RawIoTTelemetry, response: Response = None):
+    if outbox is None:
+        return process_telemetry(req)
+    try:
+        if (not req.timestamp or not re.search(r"(?:Z|[+-]\d{2}:\d{2})$", req.timestamp)
+                or not 0 < len(req.device_id.strip()) <= 100 or not 0 < len(req.connection_number.strip()) <= 50):
+            raise ValueError("Missing observation time or identity")
+        identifier = outbox.event_id(req.device_id, req.connection_number, req.timestamp)
+        observed = datetime.fromisoformat(req.timestamp.replace("Z", "+00:00"))
+        if (observed - datetime.now(timezone.utc)).total_seconds() > 5:
+            raise ValueError("Observation time is ahead of the server clock")
+        with outbox_lock:
+            previous = outbox.existing(identifier)
+            if response is not None:
+                response.headers["X-Telemetry-Delivery"] = "queued"
+            if previous is not None:
+                return ProcessedIoTTelemetry.model_validate(previous)
+            outbox.require_capacity()
+            return process_telemetry(
+                req, identifier, outbox.is_latest(req.connection_number, observed.timestamp())
+            )
+    except QueueFull:
+        raise HTTPException(503, "Telemetry outbox is full", headers={"Retry-After": "5"})
+    except ValueError:
+        raise HTTPException(422, "Invalid durable telemetry observation")
+
+
+def process_telemetry(req: RawIoTTelemetry, identifier: str | None = None, record_history: bool = True):
     profile = resolve_product_profile(req.product_type)
     target_temp = req.target_temp if req.target_temp is not None else profile["target_temp"]
     truck_key = req.truck_id or req.connection_number or req.device_id
@@ -240,6 +332,7 @@ def process_iot_telemetry(req: RawIoTTelemetry):
         humidity=req.humidity,
         door_open=bool(req.door_open),
         speed_kmh=speed,
+        record_history=record_history,
     )
 
     ts = req.timestamp or datetime.now(timezone.utc).isoformat()
@@ -289,6 +382,15 @@ def process_iot_telemetry(req: RawIoTTelemetry):
             "humidity_pct": req.humidity,
             "door_open": req.door_open if "door_open" in req.model_fields_set else None,
         }
+    if identifier is not None:
+        # Keep fallback coordinates and speed out of durable operational telemetry.
+        forwarded["gps"] = {
+            "lat": req.gps_lat if "gps_lat" in req.model_fields_set else None,
+            "lng": req.gps_lng if "gps_lng" in req.model_fields_set else None,
+            "speed_kmh": req.speed_kmh if "speed_kmh" in req.model_fields_set else None,
+        }
+        outbox.enqueue(identifier, forwarded, processed.model_dump())
+        return processed
     try:
         requests.post(
             f"{backend_url}/api/iot/ingest",

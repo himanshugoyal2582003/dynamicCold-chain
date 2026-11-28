@@ -13,6 +13,7 @@ import { AdminController } from './admin/admin.controller';
 import { OwnerController } from './owner/owner.controller';
 import { TruckController } from './truck/truck.controller';
 import { IotController } from './iot/iot.controller';
+import { TelemetryDeliveryController } from './iot/telemetry-delivery.controller';
 import { TrackingController } from './tracking/tracking.controller';
 import { TripsController, DriverTripsController } from './trips/trips.controller';
 import { NeonController } from './neon/neon.controller';
@@ -60,6 +61,7 @@ export class AppModule implements NestModule {
         { path: 'api/auth/login', method: RequestMethod.POST },
         { path: 'api/neon/health', method: RequestMethod.GET },
         { path: 'api/iot/ingest', method: RequestMethod.POST },
+        { path: 'api/iot/delivery/accept', method: RequestMethod.POST },
         { path: 'api/iot/devices/registry-sync', method: RequestMethod.POST },
       )
       .forRoutes(
@@ -67,6 +69,7 @@ export class AppModule implements NestModule {
         OwnerController,
         TruckController,
         IotController,
+        TelemetryDeliveryController,
         TrackingController,
         TripsController,
         DriverTripsController,

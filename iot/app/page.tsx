@@ -57,9 +57,10 @@ export default function IoTPortalPage() {
       if (data.success && data.device) {
         setDevices((current) => current.map((d) => (d.id === deviceId ? data.device : d)));
         const resObj = data.result?.enrichedResult;
-        appendLog(
-          `📡 ${data.device.connectionNumber} -> AI/ML Processed: Spoilage ${resObj?.spoilage_risk || 0} (${resObj?.spoilage_risk_level || 'OK'}), RSL ${resObj?.shelf_life_remaining_hours || 0}h -> Backend Ingested`,
-        );
+        const delivery = data.result?.deliveryStatus;
+        const label = delivery === 'accepted_by_outbox' ? 'AI/ML outbox accepted' :
+          delivery === 'unconfirmed' ? 'AI/ML prediction received, downstream delivery unconfirmed' : 'Local estimate';
+        appendLog(`${data.device.connectionNumber} · ${label} · Risk ${resObj?.spoilage_risk ?? 'unavailable'}`);
       }
     } catch (e: any) {
       appendLog(`Stream error for ${deviceId}: ${e.message}`);
@@ -77,7 +78,8 @@ export default function IoTPortalPage() {
       const data = await res.json();
       if (data.success && data.devices) {
         setDevices(data.devices);
-        appendLog(`🚀 Broadcasted ${data.processedCount || 0} active devices through AI/ML -> Backend pipeline.`);
+        const accepted = (data.results ?? []).filter((result: { deliveryStatus?: string }) => result.deliveryStatus === 'accepted_by_outbox').length;
+        appendLog(`Processed ${data.processedCount || 0} devices · ${accepted} accepted by the durable outbox`);
       }
     } catch (e: any) {
       appendLog(`Broadcast error: ${e.message}`);

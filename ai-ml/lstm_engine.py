@@ -63,6 +63,7 @@ class ColdChainLSTMEngine:
         humidity: float,
         door_open: bool,
         speed_kmh: float,
+        record_history: bool = True,
     ) -> Dict:
         profile = resolve_product_profile(product_type)
         base_hours = float(profile["baseline_shelf_life_hours"])
@@ -84,9 +85,8 @@ class ColdChainLSTMEngine:
             float(mult / 2.0),
         ]
 
-        if truck_key not in self.truck_sequences:
-            self.truck_sequences[truck_key] = deque(maxlen=SEQ_LEN)
-        seq_tensor = self._build_padded_sequence(self.truck_sequences[truck_key], step_vec)
+        history = self.truck_sequences.setdefault(truck_key, deque(maxlen=SEQ_LEN)) if record_history else deque(maxlen=SEQ_LEN)
+        seq_tensor = self._build_padded_sequence(history, step_vec)
 
         if self.spoilage_loaded:
             with torch.no_grad():
@@ -160,9 +160,8 @@ class ColdChainLSTMEngine:
             0.2,
             0.2,
         ]
-        if truck_key not in self.truck_ins_sequences:
-            self.truck_ins_sequences[truck_key] = deque(maxlen=SEQ_LEN)
-        self.truck_ins_sequences[truck_key].append(ins_vec)
+        if record_history:
+            self.truck_ins_sequences.setdefault(truck_key, deque(maxlen=SEQ_LEN)).append(ins_vec)
 
         return {
             "spoilage_risk": spoilage_risk,
