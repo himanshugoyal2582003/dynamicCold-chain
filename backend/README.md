@@ -14,6 +14,10 @@ npm run db:init        # Initialize tables & demo seed data (optional)
 npm run start:dev      # Starts on http://localhost:4000
 ```
 
+## Telemetry delivery, insurance review and explanations
+
+See the [platform advancement guide](./PLATFORM_ADVANCEMENT.md) for isolated rollout, architecture, operator APIs, safety limits, and browser fixtures.
+
 ## Fleet optimization
 
 The [Fleet Optimization technical guide](./FLEET_OPTIMIZATION.md) covers the assignment model, verified dispatch inputs, approval API, benchmarks, and isolated tests.

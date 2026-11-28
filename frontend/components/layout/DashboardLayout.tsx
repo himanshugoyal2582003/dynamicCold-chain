@@ -12,6 +12,7 @@ import {
   FlaskConical,
   GitFork,
   History,
+  Info,
   LayoutDashboard,
   MapPin,
   Route,
@@ -43,6 +44,7 @@ function renderNavIcon(item: NavItem, className: string) {
   if (path.endsWith('/fleet-optimization')) return <GitFork className={className} strokeWidth={1.8} />;
   if (path.endsWith('/telemetry-delivery')) return <Activity className={className} strokeWidth={1.8} />;
   if (path.endsWith('/insurance-signals')) return <Shield className={className} strokeWidth={1.8} />;
+  if (path.endsWith('/intelligence')) return <Info className={className} strokeWidth={1.8} />;
   if (path.endsWith('/issues')) return <AlertTriangle className={className} strokeWidth={1.8} />;
   if (path === '/admin') return <LayoutDashboard className={className} strokeWidth={1.8} />;
   return <Truck className={className} strokeWidth={1.8} />;
@@ -62,6 +64,7 @@ export default function DashboardLayout({ children, navItems: baseNavItems, titl
     ? [...baseNavItems, { href: `/${user.role}/maintenance`, label: 'Maintenance', icon: '' },
       { href: `/${user.role}/digital-twin`, label: 'Digital Twin', icon: '' },
       { href: `/${user.role}/fleet-optimization`, label: 'Fleet Optimization', icon: '' },
+      { href: `/${user.role}/intelligence`, label: 'Intelligence', icon: '' },
       ...(user.role === 'admin' ? [
         { href: '/admin/telemetry-delivery', label: 'Telemetry Delivery', icon: '' },
         { href: '/admin/insurance-signals', label: 'Insurance Review', icon: '' },
@@ -69,7 +72,7 @@ export default function DashboardLayout({ children, navItems: baseNavItems, titl
     : baseNavItems;
   const isActive = (href: string) => {
     const [itemPath, itemQuery] = href.split('?');
-    if (/^\/(admin|owner)\/(insurance-signals)$/.test(pathname)) return itemPath === pathname;
+    if (/^\/(admin|owner)\/(insurance-signals|intelligence)$/.test(pathname)) return itemPath === pathname;
     if (pathname === '/admin/telemetry-delivery') return itemPath === pathname;
     if (pathname === '/admin/fleet-optimization' || pathname === '/owner/fleet-optimization') return itemPath === pathname;
     if (pathname === '/admin/digital-twin' || pathname === '/owner/digital-twin') return itemPath === pathname;
@@ -119,7 +122,7 @@ export default function DashboardLayout({ children, navItems: baseNavItems, titl
                   }
                 : undefined}
               className={`sidebar-link ${isActive(item.href) ? 'active' : ''}`}
-              aria-current={/\/(maintenance|digital-twin|fleet-optimization|telemetry-delivery|insurance-signals)$/.test(item.href) && isActive(item.href) ? 'page' : undefined}
+              aria-current={/\/(maintenance|digital-twin|fleet-optimization|telemetry-delivery|insurance-signals|intelligence)$/.test(item.href) && isActive(item.href) ? 'page' : undefined}
             >
               {renderNavIcon(item, 'w-4 h-4 shrink-0')}
               <span>{item.label}</span>
@@ -177,7 +180,7 @@ export default function DashboardLayout({ children, navItems: baseNavItems, titl
                 : undefined}
               className="flex min-w-[76px] flex-1 flex-col items-center py-2 text-[11px] leading-tight gap-1"
               style={{ color: isActive(item.href) ? 'var(--color-gold)' : 'var(--color-slate)' }}
-              aria-current={/\/(maintenance|digital-twin|fleet-optimization|telemetry-delivery|insurance-signals)$/.test(item.href) && isActive(item.href) ? 'page' : undefined}
+              aria-current={/\/(maintenance|digital-twin|fleet-optimization|telemetry-delivery|insurance-signals|intelligence)$/.test(item.href) && isActive(item.href) ? 'page' : undefined}
             >
               {renderNavIcon(item, 'w-5 h-5 shrink-0')}
               <span>{item.label}</span>
