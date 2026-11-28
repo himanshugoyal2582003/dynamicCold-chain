@@ -27,8 +27,10 @@ import { DigitalTwinModule } from './digital-twin/digital-twin.module';
 import { DigitalTwinController } from './digital-twin/digital-twin.controller';
 import { FleetModule } from './fleet-optimization/fleet.module';
 import { FleetController } from './fleet-optimization/fleet.controller';
+import { InsuranceSignalsController } from './insurance-signals/insurance-signals.controller';
 
 @Module({
+  controllers: [InsuranceSignalsController],
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
@@ -77,6 +79,7 @@ export class AppModule implements NestModule {
         MaintenanceController,
         DigitalTwinController,
         FleetController,
+        InsuranceSignalsController,
         NeonController,
         { path: 'api/auth/me', method: RequestMethod.GET },
         { path: 'api/auth/logout', method: RequestMethod.POST },

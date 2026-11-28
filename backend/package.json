@@ -19,6 +19,8 @@
     "test:digital-twin": "npm run build && node --test scripts/digital-twin-unit.test.cjs scripts/digital-twin-integration.test.cjs",
     "test:fleet": "npm run build && node --test scripts/fleet-optimizer.test.cjs scripts/fleet-integration.test.cjs",
     "evaluate:fleet": "node scripts/evaluate-fleet.cjs",
+    "test:advisory": "npm run build && node --test scripts/telemetry-delivery.test.cjs scripts/insurance-signals.test.cjs",
+    "evaluate:insurance-signals": "node scripts/evaluate-insurance-signals.cjs",
     "db:init": "ts-node src/db/db-init.ts",
     "db:migrate": "ts-node src/db/migrate.ts",
     "bootstrap:admin": "ts-node src/db/bootstrap-admin.ts"
