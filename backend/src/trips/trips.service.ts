@@ -7,6 +7,15 @@ import { TrackingGateway } from '../tracking/tracking.gateway';
 
 const TRIP_STATUSES = ['ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'];
 
+interface FleetApproval {
+  ownerId: string;
+  shipmentId: string;
+  profileRevision: number;
+  healthWindow: string;
+  durationSeconds: number;
+  expiresAt: string;
+}
+
 @Injectable()
 export class TripsService {
   constructor(private readonly neon: NeonService, private readonly gateway: TrackingGateway) {}
@@ -52,7 +61,7 @@ export class TripsService {
 
   async createTrip(actor: { sub: string; role: string; truckId?: string | null }, input: {
     truck_id: string; user_id: string; origin: string; destination: string; cargo_type: string; notes?: string;
-  }) {
+  }, approval?: FleetApproval) {
     if (!['admin', 'owner', 'truckUser'].includes(actor.role)) throw new ForbiddenException('Only administrators, fleet owners, and assigned drivers can assign trips.');
     if (actor.role === 'truckUser' && (!actor.truckId || input.truck_id !== actor.truckId || input.user_id !== actor.sub)) {
       throw new ForbiddenException('Drivers can only assign trips to their own assigned truck.');
@@ -74,6 +83,16 @@ export class TripsService {
     let results: any[][];
     try {
       results = await this.neon.runTransaction([
+        ...(approval ? [
+          {
+            text: `SELECT id FROM fleet_shipments WHERE id=$1 AND owner_id=$2 FOR UPDATE`,
+            values: [approval.shipmentId, approval.ownerId],
+          },
+          {
+            text: 'SELECT truck_id FROM fleet_dispatch_profiles WHERE truck_id=$1 FOR UPDATE',
+            values: [input.truck_id],
+          },
+        ] : []),
         {
           text: `SELECT id, owner_id, status FROM trucks WHERE id = $1::uuid AND active = true FOR UPDATE`,
           values: [input.truck_id],
@@ -85,7 +104,7 @@ export class TripsService {
         {
           text: `WITH created AS (
                    INSERT INTO trips (truck_id, user_id, origin, destination, cargo_type, notes, status, started_at)
-                   SELECT t.id, d.id, $3, $4, $5, $6, 'ASSIGNED', NULL
+                   SELECT t.id, d.id, $3::text, $4::text, $5::text, $6, 'ASSIGNED', NULL
                    FROM trucks t JOIN users d ON d.id = $2::uuid
                    WHERE t.id = $1::uuid AND t.active = true AND t.status = 'available'
                      AND d.role = 'truckUser' AND d.active = true AND d.owner_id = t.owner_id
@@ -93,14 +112,40 @@ export class TripsService {
                      AND ($7::text <> 'owner' OR t.owner_id = $8::uuid)
                      AND NOT EXISTS (SELECT 1 FROM trips x WHERE (x.truck_id = t.id OR x.user_id = d.id)
                        AND x.status IN ('ASSIGNED','IN_PROGRESS'))
+                     ${approval ? `AND t.owner_id=$11::uuid AND clock_timestamp() < $15::timestamptz
+                       AND EXISTS (SELECT 1 FROM users u JOIN users fleet ON fleet.id=t.owner_id AND fleet.active AND fleet.role='owner'
+                         WHERE u.id=$9::uuid AND u.active AND u.role=$7 AND u.role IN ('owner','admin'))
+                       AND EXISTS (
+                         SELECT 1 FROM fleet_shipments s JOIN fleet_dispatch_profiles p ON p.truck_id=t.id AND p.owner_id=t.owner_id
+                         WHERE s.id=$10 AND s.owner_id=t.owner_id AND s.trip_id IS NULL AND NOT s.synthetic AND NOT p.synthetic
+                           AND s.origin=$3::text AND s.destination=$4::text AND s.cargo_type=$5::text
+                           AND p.revision=$12 AND s.weight_tons <= p.usable_tons AND p.usable_tons <= t.capacity_tons
+                           AND p.target_c=t.target_temp_c
+                           AND lower(s.cargo_type)=ANY(p.cargo_types) AND p.verified_at >= now()-interval '30 minutes'
+                           AND clock_timestamp()+$14::integer*interval '1 second' <= s.deadline
+                           AND clock_timestamp()+$14::integer*interval '1 second' < s.shelf_life_until
+                       )
+                       AND EXISTS (SELECT 1 FROM (
+                         SELECT a.score,a.severity,a.last_observed_at,a.window_end FROM maintenance_assessments a
+                         WHERE a.truck_id=t.id AND a.connection_number=upper(btrim(t.iot_connection_number))
+                           AND a.target_c=t.target_temp_c ORDER BY a.window_end DESC LIMIT 1
+                       ) health WHERE health.window_end=$13 AND health.score IS NOT NULL
+                         AND health.severity IN ('normal','watch')
+                         AND health.last_observed_at BETWEEN clock_timestamp()-interval '15 minutes' AND clock_timestamp()+interval '5 seconds')
+                       AND NOT EXISTS (SELECT 1 FROM rescue_events e WHERE e.truck_id=t.id
+                         AND e.status IN ('DETECTED','RECOMMENDED','PENDING_APPROVAL','APPROVED','REROUTING'))` : ''}
                    RETURNING *
-                 ), audit AS (
+                 )${approval ? `, linked AS (
+                   UPDATE fleet_shipments s SET trip_id=created.id FROM created WHERE s.id=$10 RETURNING s.id
+                 )` : ''}, audit AS (
                    INSERT INTO activity_log (actor_id, action, entity, entity_id, details)
                    SELECT $9::uuid, 'TRIP_ASSIGNED', 'TRIP', id,
                      jsonb_build_object('truck_id', truck_id, 'driver_id', user_id, 'origin', origin, 'destination', destination)
                    FROM created
                  ) SELECT * FROM created`,
-          values: [input.truck_id, input.user_id, origin, destination, cargoType, notes, actor.role, actor.sub, actor.sub],
+          values: [input.truck_id, input.user_id, origin, destination, cargoType, notes, actor.role, actor.sub, actor.sub,
+            ...(approval ? [approval.shipmentId,approval.ownerId,approval.profileRevision,approval.healthWindow,
+              approval.durationSeconds,approval.expiresAt] : [])],
         },
       ]);
     } catch (error: any) {
@@ -108,9 +153,10 @@ export class TripsService {
       if (error?.code === '22P02') throw new BadRequestException('Truck and driver IDs must be valid UUIDs.');
       throw error;
     }
-    const truck = results[0]?.[0];
-    const driver = results[1]?.[0];
-    const created = results[2]?.[0];
+    const truck = results[approval ? 2 : 0]?.[0];
+    const driver = results[approval ? 3 : 1]?.[0];
+    const created = results.at(-1)?.[0];
+    if (approval && !created) throw new ConflictException('Fleet conditions changed or the quote expired. Re-run the plan.');
     if (!truck) throw new NotFoundException('Active truck not found.');
     if (actor.role === 'owner' && truck.owner_id !== actor.sub) throw new ForbiddenException('You cannot assign a trip outside your fleet.');
     if (!driver || driver.owner_id !== truck.owner_id || driver.truck_id !== truck.id) {

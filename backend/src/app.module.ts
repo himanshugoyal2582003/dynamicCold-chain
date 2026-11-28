@@ -24,6 +24,8 @@ import { MaintenanceModule } from './maintenance/maintenance.module';
 import { MaintenanceController } from './maintenance/maintenance.controller';
 import { DigitalTwinModule } from './digital-twin/digital-twin.module';
 import { DigitalTwinController } from './digital-twin/digital-twin.controller';
+import { FleetModule } from './fleet-optimization/fleet.module';
+import { FleetController } from './fleet-optimization/fleet.controller';
 
 @Module({
   imports: [
@@ -46,6 +48,7 @@ import { DigitalTwinController } from './digital-twin/digital-twin.controller';
     RescueModule,
     MaintenanceModule,
     DigitalTwinModule,
+    FleetModule,
   ],
 })
 export class AppModule implements NestModule {
@@ -70,6 +73,7 @@ export class AppModule implements NestModule {
         RescueController,
         MaintenanceController,
         DigitalTwinController,
+        FleetController,
         NeonController,
         { path: 'api/auth/me', method: RequestMethod.GET },
         { path: 'api/auth/logout', method: RequestMethod.POST },

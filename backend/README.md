@@ -14,6 +14,10 @@ npm run db:init        # Initialize tables & demo seed data (optional)
 npm run start:dev      # Starts on http://localhost:4000
 ```
 
+## Fleet optimization
+
+The [Fleet Optimization technical guide](./FLEET_OPTIMIZATION.md) covers the assignment model, verified dispatch inputs, approval API, benchmarks, and isolated tests.
+
 ## Digital Twin and what-if simulation
 
 See the [Digital Twin technical guide](./DIGITAL_TWIN.md) for the thermal model, scenario inputs, APIs, and isolated tests.

@@ -10,6 +10,7 @@ import { WarehouseService } from './warehouse.service';
 
 @Module({
     imports: [IotModule],
+    exports: [RoutingService],
     controllers: [RescueController],
     providers: [
         RescueService, RescueLocationService, RescueRankingService,
